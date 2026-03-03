@@ -1,0 +1,34 @@
+[project]
+name = "helios-core"
+version = "0.1.0"
+description = "Helios Quant Core: Operations Research & DRO environment for Energy Markets"
+authors = [
+    {name = "Pierre Chambet"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26.0",
+    "pandas>=2.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "ruff>=0.1.5",
+    "mypy>=1.6.1",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
