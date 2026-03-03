@@ -9,7 +9,7 @@ from helios_core.optimization.scaling import PriceScaler
 from helios_core.optimization.controller import BatteryMPC
 
 
-@pytest.fixture  # type: ignore[misc]
+@pytest.fixture
 def battery() -> BatteryAsset:
     config = BatteryConfig(
         capacity_mwh=10.0,
@@ -22,7 +22,7 @@ def battery() -> BatteryAsset:
     )
     return BatteryAsset(config)
 
-@pytest.fixture  # type: ignore[misc]
+@pytest.fixture
 def scaler() -> PriceScaler:
     scaler = PriceScaler((-1, 1))
     return scaler
