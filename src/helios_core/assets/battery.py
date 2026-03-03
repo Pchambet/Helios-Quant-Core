@@ -31,7 +31,7 @@ class BatteryAsset:
         self.efficiency_charge = efficiency_charge
         self.efficiency_discharge = efficiency_discharge
         self.leakage_rate = leakage_rate_per_hour
-        
+
         if initial_soc_mwh < 0 or initial_soc_mwh > capacity_mwh:
             raise ValueError("Initial SoC must be within [0, capacity].")
         self.soc_mwh = initial_soc_mwh
