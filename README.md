@@ -8,6 +8,25 @@ Helios-Quant-Core formulates the day-ahead battery scheduling problem as a Wasse
 
 ---
 
+## Vision
+
+Le cadrage strategique du projet est documente dans `VISION.md`.
+Le positionnement actuel est explicite:
+- laboratoire prive de transfert recherche -> industrie;
+- equipe de 2 data scientists;
+- horizon court terme: 1 mois;
+- objectif principal: gain robuste vs baseline serieuse (DRO, MPC).
+
+Le document Vision definit aussi:
+- la methode "curation + assemblage + validation";
+- les hypotheses falsifiables du sprint;
+- les gates go/no-go pour separer realite et sur-promesse.
+
+Le cadre experimental minimal (metriques, baselines, protocole, claims) est fixe dans
+`EXPERIMENT_CONTRACT.md`.
+
+---
+
 ## Approach
 
 | Layer | Method |
