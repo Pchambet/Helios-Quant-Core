@@ -1,3 +1,5 @@
+from helios_core.assets.config import BatteryConfig
+
 class PhysicalConstraintError(Exception):
     """Exception raised when an action violates the physical laws of the asset."""
     pass
@@ -8,33 +10,17 @@ class BatteryAsset:
     Enforces strict physical limits (Energy, Power, Efficiency, Leakage).
     """
 
-    def __init__(
-        self,
-        capacity_mwh: float,
-        max_charge_mw: float,
-        max_discharge_mw: float,
-        efficiency_charge: float = 0.95,
-        efficiency_discharge: float = 0.95,
-        leakage_rate_per_hour: float = 0.001,
-        initial_soc_mwh: float = 0.0,
-    ):
-        if capacity_mwh <= 0:
-            raise ValueError("Battery capacity must be strictly positive.")
-        if max_charge_mw < 0 or max_discharge_mw < 0:
-            raise ValueError("Power limits must be non-negative.")
-        if not (0 < efficiency_charge <= 1) or not (0 < efficiency_discharge <= 1):
-            raise ValueError("Efficiency must be in (0, 1].")
+    def __init__(self, config: BatteryConfig):
+        self.capacity_mwh = config.capacity_mwh
+        self.max_charge_mw = config.max_charge_mw
+        self.max_discharge_mw = config.max_discharge_mw
+        self.efficiency_charge = config.efficiency_charge
+        self.efficiency_discharge = config.efficiency_discharge
+        self.leakage_rate = config.leakage_rate_per_hour
 
-        self.capacity_mwh = capacity_mwh
-        self.max_charge_mw = max_charge_mw
-        self.max_discharge_mw = max_discharge_mw
-        self.efficiency_charge = efficiency_charge
-        self.efficiency_discharge = efficiency_discharge
-        self.leakage_rate = leakage_rate_per_hour
-
-        if initial_soc_mwh < 0 or initial_soc_mwh > capacity_mwh:
-            raise ValueError("Initial SoC must be within [0, capacity].")
-        self.soc_mwh = initial_soc_mwh
+        if config.initial_soc_mwh > config.capacity_mwh:
+            raise PhysicalConstraintError(f"Initial SoC {config.initial_soc_mwh} exceeds capacity {config.capacity_mwh}.")
+        self.soc_mwh = config.initial_soc_mwh
 
     def step(self, power_mw: float, duration_hours: float) -> None:
         """
