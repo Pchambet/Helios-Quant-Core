@@ -1,9 +1,14 @@
 import os
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import logging
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+
+# Load local environment variables (where the API Key lives)
+load_dotenv()
 
 class HistoricalCrisisLoader:
     """
@@ -22,12 +27,35 @@ class HistoricalCrisisLoader:
         Returns a DataFrame with an hourly DatetimeIndex and a 'Price_EUR_MWh' column.
         Strictly ensuring no NaNs and proper timezone alignment (UTC).
         """
+        # 1. Check if we already downloaded the immutable crisis file
+        data_dir = Path("data")
+        data_dir.mkdir(exist_ok=True)
+        parquet_path = data_dir / "epex_2022_crisis.parquet"
+
+        if parquet_path.exists():
+            logger.info(f"Loaded immutable crisis data from {parquet_path}")
+            df = pd.read_parquet(parquet_path)
+            # Ensure index strictly conforms to expected type
+            df.index = pd.to_datetime(df.index, utc=True)
+            return df
+
+        # 2. If no file, try to hit the API
         if self.api_key:
             logger.info("ENTSOE_API_KEY detected. Fetching official API data...")
-            return self._fetch_entsoe()
+            df = self._fetch_entsoe()
+
+            # Save truth if not synthetic
+            if "synthetic" not in df.columns:  # quick hack to avoid saving fake data
+                logger.info(f"Writing true historical data to {parquet_path}")
+                df.to_parquet(parquet_path)
+            return df
+
+        # 3. Last fallback (CI/CD without key)
         else:
-            logger.warning("No ENTSOE_API_KEY. Synthesizing High-Fidelity Aug 2022 Crisis data.")
-            return self._generate_synthetic_crisis()
+            logger.warning("No ENTSOE_API_KEY and no Parquet file. Synthesizing High-Fidelity Aug 2022 Crisis data.")
+            df = self._generate_synthetic_crisis()
+            df["synthetic"] = True # mark as synthetic to avoid caching
+            return df
 
     def _fetch_entsoe(self) -> pd.DataFrame:
         try:
@@ -36,7 +64,10 @@ class HistoricalCrisisLoader:
             logger.error("entsoe-py library is missing. Fallback to synthetic.")
             return self._generate_synthetic_crisis()
 
-        client = EntsoePandasClient(api_key=self.api_key)
+        if not self.api_key:
+            raise ValueError("ENTSOE_API_KEY is not set.")
+
+        client = EntsoePandasClient(api_key=str(self.api_key))
         start = pd.Timestamp(self.start_date, tz='Europe/Paris')
         end = pd.Timestamp(self.end_date, tz='Europe/Paris')
         country_code = 'FR'  # France
@@ -44,8 +75,17 @@ class HistoricalCrisisLoader:
         try:
             ts = client.query_day_ahead_prices(country_code, start=start, end=end)
             df = ts.to_frame(name='Price_EUR_MWh')
-            df.index = df.index.tz_convert('UTC')
-            df = df.fillna(method='ffill')  # Impute missing hours
+
+            # Timezone Coercion: EPEX SPOT is CET/CEST, we force UTC for the internal engine
+            dt_index = pd.DatetimeIndex(df.index)
+            df.index = dt_index.tz_convert('UTC')
+
+            # Asymmetrical Cleansing: Forward fill any missing hour in the ENTSO-E dump
+            df = df.ffill()
+
+            # Explicitly fill any remaining NaNs at the start just in case
+            df = df.bfill()
+
             return df
         except Exception as e:
             logger.error(f"ENTSO-E API Failed: {e}. Fallback to synthetic.")
