@@ -18,9 +18,22 @@ class BatteryAsset:
         self.efficiency_discharge = config.efficiency_discharge
         self.leakage_rate = config.leakage_rate_per_hour
 
+        self.capex_eur = config.capex_eur
+        self.cycle_life = config.cycle_life
+
         if config.initial_soc_mwh > config.capacity_mwh:
             raise PhysicalConstraintError(f"Initial SoC {config.initial_soc_mwh} exceeds capacity {config.capacity_mwh}.")
         self.soc_mwh = config.initial_soc_mwh
+
+    @property
+    def marginal_wear_cost_per_mwh(self) -> float:
+        """
+        Calculates the Levelized Cost of Storage (LCOS) for marginal degradation.
+        A full cycle represents 1 MWh charged and 1 MWh discharged (throughput = 2 MWh).
+        Returns the EUR cost strictly linear to the energy throughput.
+        """
+        total_throughput_mwh = self.cycle_life * self.capacity_mwh * 2.0
+        return self.capex_eur / total_throughput_mwh
 
     def step(self, power_mw: float, duration_hours: float) -> None:
         """

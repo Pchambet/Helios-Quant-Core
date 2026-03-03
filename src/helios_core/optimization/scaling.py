@@ -45,3 +45,15 @@ class PriceScaler:
         std_scale = (X_scaled - self.target_min) / (self.target_max - self.target_min)
         original_X = std_scale * (self.data_max - self.data_min) + self.data_min
         return original_X
+
+    def scale_difference(self, diff: float) -> float:
+        """
+        Scales a pure difference (like a spread or a cost) into the scaled domain.
+        Since scaled_X = (X - min)/(max - min) * (target_max - target_min) + target_min,
+        the difference scaling is strictly linear without the affine offset.
+        """
+        if self.data_min is None or self.data_max is None:
+            raise ValueError("Scaler must be fit before calling scale_difference.")
+
+        scale_factor = (self.target_max - self.target_min) / (self.data_max - self.data_min)
+        return float(diff * scale_factor)

@@ -100,3 +100,36 @@ def test_robust_mpc_behavior(battery: BatteryAsset, scaler: PriceScaler) -> None
     assert status_paranoid == "optimal"
     assert np.allclose(p_ch_paranoid, 0, atol=1e-3)
     assert np.allclose(p_dis_paranoid, 0, atol=1e-3)
+
+def test_lcos_spread_rejection(scaler: PriceScaler) -> None:
+    # We configure a battery with a very high LCOS to prove spread rejection
+    # CAPEX: 1.5M EUR, Cycles: 5000, Capacity: 10MWh
+    # Marginal Wear Cost = 1,500,000 / (5000 * 10 * 2) = 15 EUR / MWh
+    config = BatteryConfig(
+        capacity_mwh=10.0,
+        max_charge_mw=5.0,
+        max_discharge_mw=5.0,
+        efficiency_charge=1.0,  # 100% efficient to purely test LCOS spread
+        efficiency_discharge=1.0,
+        leakage_rate_per_hour=0.0,
+        initial_soc_mwh=0.0,
+        capex_eur=1500000.0,
+        cycle_life=5000
+    )
+    battery = BatteryAsset(config)
+
+    # We simulate a market with a spread of 10 EUR/MWh
+    # Base: 40 EUR. Peak: 50 EUR.
+    prices = np.array([40.0] * 12 + [50.0] * 12)
+    scaler.fit(prices)
+    mpc = BatteryMPC(battery, scaler)
+
+    # Run the deterministic solver
+    p_ch, p_dis, status = mpc.solve_deterministic(prices)
+
+    assert status == "optimal"
+
+    # Because the Spread (10 EUR) < Total Cycle LCOS (15 + 15 = 30 EUR),
+    # the algorithm must rationally choose to preserve the battery life and do nothing.
+    assert np.allclose(p_ch, 0, atol=1e-3)
+    assert np.allclose(p_dis, 0, atol=1e-3)

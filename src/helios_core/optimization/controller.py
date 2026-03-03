@@ -47,10 +47,13 @@ class BatteryMPC:
         # 3. Objective: Maximize Profit (Minimize Negative Profit)
         # Note: scaled_prices are passed in. The optimal policy (x) is scale-invariant,
         # but the objective value (profit) will need inverse scaling later if evaluated.
-        # We also add a tiny cyclic penalty to avoid useless ping-pong micro-cycles.
-        cyclic_penalty = 1e-4
+        # We replace the naive cyclic_penalty with the formal Levelized Cost of Storage (LCOS).
+        # Since expected_prices are scaled, the marginal wear cost must be equally scaled linearly.
+        marginal_lcos_eur = self.battery.marginal_wear_cost_per_mwh
+        scaled_wear_penalty = self.scaler.scale_difference(marginal_lcos_eur)
+
         profit = p_dis @ scaled_prices - p_ch @ scaled_prices
-        wear = cyclic_penalty * cp.sum(p_ch + p_dis)  # type: ignore
+        wear = scaled_wear_penalty * cp.sum(p_ch + p_dis)  # type: ignore
 
         objective = cp.Maximize(profit - wear)
 
@@ -134,8 +137,9 @@ class BatteryMPC:
         s = cp.Variable(N)
 
         # 4. Objective (Min-Min Dual form)
-        cyclic_penalty = 1e-4
-        wear = cyclic_penalty * cp.sum(p_ch + p_dis)  # type: ignore
+        marginal_lcos_eur = self.battery.marginal_wear_cost_per_mwh
+        scaled_wear_penalty = self.scaler.scale_difference(marginal_lcos_eur)
+        wear = scaled_wear_penalty * cp.sum(p_ch + p_dis)  # type: ignore
 
         # We want to maximize worst-case profit.
         # By strong duality, max_{Q} E_Q[Profit] = min_{lam, s} lam*eps + (1/N) sum(s)
