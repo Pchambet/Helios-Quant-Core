@@ -32,17 +32,17 @@ class NaiveHeuristicAgent:
         p_ch = np.zeros(horizon)
         p_dis = np.zeros(horizon)
 
-        # We assume forecast starts at hour 0.
-        # For a simplistic agent, we just check the physical hours if available,
-        # or we just hardcode indices for the backtester (assuming 0-23 daily cadence).
-        # To be safe, we just say: find lowest and highest prices in forecast.
-        min_idx = int(np.argmin(price_forecast))
-        max_idx = int(np.argmax(price_forecast))
+        # The Naive agent is structurally blind to J+2 (the proxy).
+        # It operates strictly on the 24h Day-Ahead market.
+        da_prices = price_forecast[:24]
+
+        min_idx = int(np.argmin(da_prices))
+        max_idx = int(np.argmax(da_prices))
 
         p_ch[min_idx] = self.max_charge
         p_dis[max_idx] = self.max_discharge
 
-        expected_profit = p_dis[max_idx] * price_forecast[max_idx] - p_ch[min_idx] * price_forecast[min_idx]
+        expected_profit = p_dis[max_idx] * da_prices[max_idx] - p_ch[min_idx] * da_prices[min_idx]
         return p_ch, p_dis, float(expected_profit)
 
 

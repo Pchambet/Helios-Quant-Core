@@ -72,7 +72,7 @@ def main() -> None:
 
     for name, agent in agents.items():
         logging.info(f"Running {name}...")
-        tester = WalkForwardBacktester(df, agent, metrics, horizon=24)
+        tester = WalkForwardBacktester(df, agent, metrics)
         report = tester.run()
         results[name] = report
         history_dfs[name] = pd.DataFrame(tester.history).set_index("time")

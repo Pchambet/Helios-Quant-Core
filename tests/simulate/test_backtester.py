@@ -53,17 +53,17 @@ def test_backtester_no_leakage() -> None:
     agent = DummyAgent()
     metrics = RiskMetrics(capex_eur=300000.0, cycle_life=5000, capacity_mwh=10.0)
 
-    backtester = WalkForwardBacktester(df, agent, metrics, horizon=24)
-    # It should iterate 72 - 24 = 48 times exactly.
+    backtester = WalkForwardBacktester(df, agent, metrics)
+    # It iterators 3 days of 24h.
 
     report = backtester.run()
 
-    assert len(backtester.history) == 48
+    # We iterate in chunks of 24 for the 72 hours, executing 3 * 24 = 72 full steps.
+    assert len(backtester.history) == 72
 
     # Checking EFC
-    # The dummy agent charges 1.0 MW at t=0 (step 0 of forecast).
-    # Since backtester strictly executes step 0, it will ONLY ever execute p_ch[0] = 1.0
-    # Thus throughput is 1.0 MWh per step.
-    # Total throughput = 48 steps * 1.0 MWh = 48 MWh.
-    # EFC = 48 / (10 * 2) = 2.4 cycles.
-    assert np.isclose(report["EFC (Cycles)"], 2.4)
+    # The dummy agent charges 1.0 MW at t=0, discharges 1.0 MW at t=1 for any call it gets.
+    # It gets called 3 times (once per day).
+    # Total throughput per day is 2.0 MWh. Over 3 days = 6.0 MWh.
+    # EFC = 6.0 / (10 * 2) = 0.3 cycles.
+    assert np.isclose(report["EFC (Cycles)"], 0.3)

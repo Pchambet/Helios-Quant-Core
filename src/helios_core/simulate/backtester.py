@@ -9,15 +9,14 @@ logger = logging.getLogger(__name__)
 
 class WalkForwardBacktester:
     """
-    Industrial Backtesting Engine.
-    Strictly prevents Look-Ahead Bias by iterating chronologically.
-    Passes only T to T+24 horizon to the agents.
+    Industrial Backtesting Engine for the Day-Ahead Market.
+    Implements a 48h Receding Horizon using a Seasonal 7-Day SMA Proxy.
+    Executes trades in 24h blocks to mirror actual EPEX SPOT market mechanics.
     """
-    def __init__(self, data: pd.DataFrame, agent: TradingAgent, metrics: RiskMetrics, horizon: int = 24):
+    def __init__(self, data: pd.DataFrame, agent: TradingAgent, metrics: RiskMetrics):
         self.data = data
         self.agent = agent
         self.metrics = metrics
-        self.horizon = horizon
 
         # State Tracking
         self.current_soc = 0.0
@@ -25,52 +24,70 @@ class WalkForwardBacktester:
 
     def run(self) -> dict[str, float]:
         prices = self.data['Price_EUR_MWh'].values
-        total_steps = len(prices) - self.horizon
-
-        if total_steps <= 0:
-            raise ValueError("Dataset is shorter than the prediction horizon.")
+        total_steps = len(prices)
 
         gross_revenue = 0.0
         gross_cost = 0.0
         throughput = 0.0
 
-        for t in range(total_steps):
-            # 1. State Isolation: Agent only sees the next 24 hours.
-            forecast = prices[t: t + self.horizon]
-            current_price = forecast[0]
+        # Step by 24h blocks (Day-Ahead Clearing)
+        for t in range(0, total_steps, 24):
+            # 1. State Isolation: The agent sees the true next 24 hours.
+            real_forecast = prices[t: t + 24]
 
-            # 2. Agent Decision
-            p_ch_vec, p_dis_vec, _ = self.agent.act(self.current_soc, forecast)
+            if len(real_forecast) < 24:
+                # Discard incomplete final day
+                break
 
-            # 3. Execution (We only execute the immediate T=0 step, the rest is receding horizon plan).
-            p_ch_now = p_ch_vec[0]
-            p_dis_now = p_dis_vec[0]
+            # 2. Proxy Hallucination: 7-Days SMA for the T+25 to T+48 horizon
+            proxy_forecast = np.zeros(24)
+            for h in range(24):
+                past_vals = []
+                for d in range(1, 8):
+                    past_idx = t + h - 24 * d
+                    if past_idx >= 0:
+                        past_vals.append(prices[past_idx])
 
-            # 4. Physical limits accounting (Assuming 1 Hour duration)
-            if p_ch_now > 0:
-                cost = p_ch_now * current_price
-                gross_cost += cost
-            if p_dis_now > 0:
-                rev = p_dis_now * current_price * 0.95 # Assumed simple discharge loss for backtest counting
-                gross_revenue += rev
+                if past_vals:
+                    proxy_forecast[h] = np.mean(past_vals)
+                else:
+                    proxy_forecast[h] = real_forecast[h] # Fallback to persistence if no history
 
-            throughput += (p_ch_now + p_dis_now)
+            # The 48h Extended Horizon
+            full_forecast = np.concatenate([real_forecast, proxy_forecast])
 
-            # Update true physical SoC state. We simplify without calling the full BatteryAsset.step here
-            # to keep the backtest quick, since the Agent's MPC already respects bounds.
-            self.current_soc += (p_ch_now * 0.95) - (p_dis_now / 0.95)
-            self.current_soc = np.clip(self.current_soc, 0.0, self.metrics.capacity_mwh)
+            # 3. Agent Decision (Plans on 48h)
+            p_ch_vec, p_dis_vec, _ = self.agent.act(self.current_soc, full_forecast)
 
-            # Log
-            self.history.append({
-                "time": self.data.index[t],
-                "price": current_price,
-                "p_ch": p_ch_now,
-                "p_dis": p_dis_now,
-                "soc": self.current_soc
-            })
+            # 4. Partial Execution (We ONLY execute the 24h truthful Market day, throwing away the proxy)
+            for i in range(24):
+                p_ch_now = p_ch_vec[i]
+                p_dis_now = p_dis_vec[i]
+                current_price = real_forecast[i]
 
-            if t % 500 == 0:
-                logger.info(f"Backtesting step {t}/{total_steps} completed.")
+                if p_ch_now > 0:
+                    cost = p_ch_now * current_price
+                    gross_cost += cost
+                if p_dis_now > 0:
+                    rev = p_dis_now * current_price * 0.95
+                    gross_revenue += rev
+
+                throughput += (p_ch_now + p_dis_now)
+
+                # Update true physical SoC state
+                self.current_soc += (p_ch_now * 0.95) - (p_dis_now / 0.95)
+                self.current_soc = np.clip(self.current_soc, 0.0, self.metrics.capacity_mwh)
+
+                # Log
+                self.history.append({
+                    "time": self.data.index[t + i],
+                    "price": current_price,
+                    "p_ch": p_ch_now,
+                    "p_dis": p_dis_now,
+                    "soc": self.current_soc
+                })
+
+            if t % (24 * 10) == 0:
+                logger.info(f"Backtesting Day {t//24}/{total_steps//24} completed.")
 
         return self.metrics.generate_report(gross_revenue, gross_cost, throughput)

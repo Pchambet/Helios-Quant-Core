@@ -51,7 +51,7 @@ def main() -> None:
         mpc = BatteryMPC(BatteryAsset(config), scaler)
         agent = RobustDROAgent(mpc, epsilon=eps)
 
-        tester = WalkForwardBacktester(df, agent, metrics, horizon=24)
+        tester = WalkForwardBacktester(df, agent, metrics)
         report = tester.run()
 
         net_pnl = report["Net Adjusted PnL (EUR)"]
