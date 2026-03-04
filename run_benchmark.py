@@ -52,12 +52,12 @@ def main() -> None:
 
     # - Deterministic
     det_scaler = PriceScaler()
-    det_mpc = BatteryMPC(BatteryAsset(config), det_scaler)
+    det_mpc = BatteryMPC(BatteryAsset(config), det_scaler, alpha_slippage=5.0)
     det_agent = DeterministicMPCAgent(det_mpc)
 
     # - Robust DRO
     dro_scaler = PriceScaler()
-    dro_mpc = BatteryMPC(BatteryAsset(config), dro_scaler)
+    dro_mpc = BatteryMPC(BatteryAsset(config), dro_scaler, alpha_slippage=5.0)
     dro_agent = RobustDROAgent(dro_mpc, epsilon=1.5) # Tuned Epsilon for Crisis Survival
 
     # 4. Run Backtests

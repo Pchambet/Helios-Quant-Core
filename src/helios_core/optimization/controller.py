@@ -14,9 +14,10 @@ class BatteryMPC:
     """
     Model Predictive Controller integrating the Battery Digital Twin with CVXPY.
     """
-    def __init__(self, battery: BatteryAsset, scaler: PriceScaler):
+    def __init__(self, battery: BatteryAsset, scaler: PriceScaler, alpha_slippage: float = 1.0):
         self.battery = battery
         self.scaler = scaler
+        self.alpha_slippage = alpha_slippage
 
     def solve_deterministic(self, expected_prices: np.ndarray) -> Tuple[np.ndarray, np.ndarray, str]:
         """
@@ -51,11 +52,13 @@ class BatteryMPC:
         # Since expected_prices are scaled, the marginal wear cost must be equally scaled linearly.
         marginal_lcos_eur = self.battery.marginal_wear_cost_per_mwh
         scaled_wear_penalty = self.scaler.scale_difference(marginal_lcos_eur)
+        scaled_alpha = self.scaler.scale_difference(self.alpha_slippage)
 
         profit = p_dis @ scaled_prices - p_ch @ scaled_prices
         wear = scaled_wear_penalty * cp.sum(p_ch + p_dis)  # type: ignore
+        slippage = scaled_alpha * cp.sum(cp.square(p_ch) + cp.square(p_dis))  # type: ignore
 
-        objective = cp.Maximize(profit - wear)
+        objective = cp.Maximize(profit - wear - slippage)
 
         # 4. Physical Constraints (Linearized Digital Twin)
         constraints = []
@@ -139,13 +142,16 @@ class BatteryMPC:
         # 4. Objective (Min-Min Dual form)
         marginal_lcos_eur = self.battery.marginal_wear_cost_per_mwh
         scaled_wear_penalty = self.scaler.scale_difference(marginal_lcos_eur)
+        scaled_alpha = self.scaler.scale_difference(self.alpha_slippage)
+
         wear = scaled_wear_penalty * cp.sum(p_ch + p_dis)  # type: ignore
+        slippage = scaled_alpha * cp.sum(cp.square(p_ch) + cp.square(p_dis))  # type: ignore
 
         # We want to maximize worst-case profit.
         # By strong duality, max_{Q} E_Q[Profit] = min_{lam, s} lam*eps + (1/N) sum(s)
         # Therefore, the objective of the overall problem is to Maximize this lower bound.
         # Wait, standard DRO minimizes Loss (where Loss = Cost - Revenue).
-        # Loss L(u, xi) = (p_ch @ xi - p_dis @ xi) + wear
+        # Loss L(u, xi) = (p_ch @ xi - p_dis @ xi) + wear + slippage
         # Primal: min_u max_Q E_Q[ L(u, xi) ]
         # Dual: min_{u, lam, s} lam * eps + 1/N * sum(s)
         # Subject to: s_i >= L(u, xi_i) + lam ||xi - xi_i|| for all xi.
@@ -154,13 +160,13 @@ class BatteryMPC:
         objective = cp.Minimize(lam * epsilon + (1/N) * cp.sum(s))  # type: ignore
         constraints = []
 
-        # Robust Dual Constraints (The L1 norm trick to keep it LP)
+        # Robust Dual Constraints (The L1 norm trick to keep it LP core despite QP slippage)
         # Because we only have linear dependence in xi, the supremum condition simplifies to bounding the dual norm.
         # For L1 primal distance metric, the dual norm is L_inf.
-        # s_i >= (p_ch @ xi_i - p_dis @ xi_i) + wear
+        # s_i >= (p_ch @ xi_i - p_dis @ xi_i) + wear + slippage
 
         for i in range(N):
-            empirical_loss = (p_ch @ scaled_scenarios[i] - p_dis @ scaled_scenarios[i]) + wear
+            empirical_loss = (p_ch @ scaled_scenarios[i] - p_dis @ scaled_scenarios[i]) + wear + slippage
             constraints.append(s[i] >= empirical_loss)
 
         # The dual norm constraint ensuring the supremum over ALL xi is bounded
