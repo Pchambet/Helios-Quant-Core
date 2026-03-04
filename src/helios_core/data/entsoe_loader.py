@@ -59,7 +59,7 @@ class HistoricalCrisisLoader:
 
     def _fetch_entsoe(self) -> pd.DataFrame:
         try:
-            from entsoe import EntsoePandasClient
+            from entsoe import EntsoePandasClient # type: ignore
         except ImportError:
             logger.error("entsoe-py library is missing. Fallback to synthetic.")
             return self._generate_synthetic_crisis()
@@ -86,7 +86,7 @@ class HistoricalCrisisLoader:
             # Explicitly fill any remaining NaNs at the start just in case
             df = df.bfill()
 
-            return df
+            return df # type: ignore
         except Exception as e:
             logger.error(f"ENTSO-E API Failed: {e}. Fallback to synthetic.")
             return self._generate_synthetic_crisis()

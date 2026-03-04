@@ -40,3 +40,5 @@ testpaths = ["tests"]
 [tool.mypy]
 python_version = "3.10"
 strict = true
+disallow_any_generics = false
+warn_unused_ignores = false

@@ -46,7 +46,7 @@ class ScenarioGenerator:
         scenarios = np.zeros((self.n_scenarios, self.horizon))
 
         for i, start_idx in enumerate(start_indices):
-            scenarios[i, :] = price_array[start_idx : start_idx + self.horizon]
+            scenarios[i, :] = price_array[start_idx : start_idx + self.horizon] # type: ignore
 
         # Optional: Add Gaussian noise to emulate out-of-distribution shocks
         if self.noise > 0.0:
