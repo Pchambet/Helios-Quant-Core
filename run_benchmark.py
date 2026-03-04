@@ -11,6 +11,7 @@ from helios_core.optimization.controller import BatteryMPC
 from helios_core.simulate.metrics import RiskMetrics
 from helios_core.simulate.backtester import WalkForwardBacktester
 from helios_core.simulate.agents import NaiveHeuristicAgent, DeterministicMPCAgent, RobustDROAgent
+from helios_core.stochastic.risk_manager import DynamicEpsilonManager
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -70,9 +71,21 @@ def main() -> None:
         "Robust DRO (L1)": dro_agent
     }
 
+    dynamic_risk_manager = DynamicEpsilonManager(
+        lookback_window_hours=168,
+        eps_min=0.05,
+        eps_max=0.50,
+        vol_min_expected=50.0,
+        vol_max_expected=300.0
+    )
+
     for name, agent in agents.items():
         logging.info(f"Running {name}...")
-        tester = WalkForwardBacktester(df, agent, metrics)
+
+        # Only the DRO gets the Dynamic Risk Manager
+        manager = dynamic_risk_manager if name == "Robust DRO (L1)" else None
+
+        tester = WalkForwardBacktester(df, agent, metrics, risk_manager=manager)
         report = tester.run()
         results[name] = report
         history_dfs[name] = pd.DataFrame(tester.history).set_index("time")

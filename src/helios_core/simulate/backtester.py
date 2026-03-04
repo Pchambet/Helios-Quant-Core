@@ -1,9 +1,10 @@
 import pandas as pd
 import numpy as np
 import logging
-from typing import Any, Dict, List
-from helios_core.simulate.agents import TradingAgent
+from typing import Any, Dict, List, Optional
+from helios_core.simulate.agents import TradingAgent, RobustDROAgent
 from helios_core.simulate.metrics import RiskMetrics
+from helios_core.stochastic.risk_manager import DynamicEpsilonManager
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +14,17 @@ class WalkForwardBacktester:
     Implements a 48h Receding Horizon using a Seasonal 7-Day SMA Proxy.
     Executes trades in 24h blocks to mirror actual EPEX SPOT market mechanics.
     """
-    def __init__(self, data: pd.DataFrame, agent: TradingAgent, metrics: RiskMetrics):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        agent: TradingAgent,
+        metrics: RiskMetrics,
+        risk_manager: Optional[DynamicEpsilonManager] = None
+    ):
         self.data = data
         self.agent = agent
         self.metrics = metrics
+        self.risk_manager = risk_manager
 
         # State Tracking
         self.current_soc = 0.0
@@ -55,6 +63,14 @@ class WalkForwardBacktester:
 
             # The 48h Extended Horizon
             full_forecast = np.concatenate([real_forecast, proxy_forecast])
+
+            # 2.5 Dynamic Epsilon Update (Axe 1)
+            if self.risk_manager is not None and isinstance(self.agent, RobustDROAgent):
+                # We feed the past 168 available real hours (or less if at start)
+                past_prices = pd.Series(prices[max(0, t - self.risk_manager.lookback):t])
+                dynamic_eps = self.risk_manager.compute_epsilon(past_prices)
+                self.agent.epsilon = dynamic_eps
+                logger.debug(f"Day {t//24} - Volatility Adjusted Epsilon: {dynamic_eps:.3f}")
 
             # 3. Agent Decision (Plans on 48h)
             p_ch_vec, p_dis_vec, _ = self.agent.act(self.current_soc, full_forecast)
