@@ -50,12 +50,12 @@ def main() -> None:
     naive_agent = NaiveHeuristicAgent(max_charge=5.0, max_discharge=5.0)
 
     # - Deterministic
-    det_scaler = PriceScaler((-1, 1))
+    det_scaler = PriceScaler()
     det_mpc = BatteryMPC(BatteryAsset(config), det_scaler)
     det_agent = DeterministicMPCAgent(det_mpc)
 
     # - Robust DRO
-    dro_scaler = PriceScaler((-1, 1))
+    dro_scaler = PriceScaler()
     dro_mpc = BatteryMPC(BatteryAsset(config), dro_scaler)
     dro_agent = RobustDROAgent(dro_mpc, epsilon=1.5) # Tuned Epsilon for Crisis Survival
 
@@ -63,7 +63,8 @@ def main() -> None:
     results = {}
     history_dfs = {}
 
-    agents = {
+    from helios_core.simulate.agents import TradingAgent
+    agents: dict[str, TradingAgent] = {
         "Naive Heuristic": naive_agent,
         "Deterministic MPC": det_agent,
         "Robust DRO (L1)": dro_agent

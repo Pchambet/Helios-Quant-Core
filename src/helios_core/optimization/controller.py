@@ -55,7 +55,13 @@ class BatteryMPC:
         profit = p_dis @ scaled_prices - p_ch @ scaled_prices
         wear = scaled_wear_penalty * cp.sum(p_ch + p_dis)  # type: ignore
 
-        objective = cp.Maximize(profit - wear)
+        # Soft Terminal Constraint: Penalize ending the day empty to prevent End-Of-Horizon liquidation
+        # Target 100% SoC to survive the night, penalized by 80% of the daily maximum price.
+        target_soc = 1.0 * self.battery.capacity_mwh
+        soc_shortfall = cp.pos(target_soc - soc[T])  # type: ignore
+        terminal_penalty = soc_shortfall * float(0.8 * np.max(scaled_prices))
+
+        objective = cp.Maximize(profit - wear - terminal_penalty)
 
         # 4. Physical Constraints (Linearized Digital Twin)
         constraints = []
@@ -158,8 +164,13 @@ class BatteryMPC:
         # Because we only have linear dependence in xi, the supremum condition simplifies to bounding the dual norm.
         # For L1 primal distance metric, the dual norm is L_inf.
         # s_i >= (p_ch @ xi_i - p_dis @ xi_i) + wear
+        # Soft Terminal Constraint
+        target_soc = 1.0 * self.battery.capacity_mwh
+        soc_shortfall = cp.pos(target_soc - soc[T])  # type: ignore
+
         for i in range(N):
-            empirical_loss = (p_ch @ scaled_scenarios[i] - p_dis @ scaled_scenarios[i]) + wear
+            terminal_penalty = soc_shortfall * float(0.8 * np.max(scaled_scenarios[i]))
+            empirical_loss = (p_ch @ scaled_scenarios[i] - p_dis @ scaled_scenarios[i]) + wear + terminal_penalty
             constraints.append(s[i] >= empirical_loss)
 
         # The dual norm constraint ensuring the supremum over ALL xi is bounded

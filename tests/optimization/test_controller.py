@@ -24,7 +24,7 @@ def battery() -> BatteryAsset:
 
 @pytest.fixture
 def scaler() -> PriceScaler:
-    scaler = PriceScaler((-1, 1))
+    scaler = PriceScaler(1.0)
     return scaler
 
 

@@ -47,7 +47,7 @@ def main() -> None:
     print("-" * 55)
 
     for eps in epsilons:
-        scaler = PriceScaler((-1, 1))
+        scaler = PriceScaler()
         mpc = BatteryMPC(BatteryAsset(config), scaler)
         agent = RobustDROAgent(mpc, epsilon=eps)
 
