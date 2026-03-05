@@ -43,18 +43,23 @@ def test_scenario_generator_insufficient_windows() -> None:
     config = StochasticConfig(n_scenarios=10, horizon_hours=24)  # Asking for 10 windows
     generator = ScenarioGenerator(config)
 
-    with pytest.raises(ValueError, match="history only allows 7"):
-        generator.fit_transform(historical_data)
+    scenarios = generator.fit_transform(historical_data)
+    assert scenarios.shape == (10, 24), "Generator must fallback to bootstrap with replacement"
 
 
 def test_scenario_generator_noise_addition() -> None:
     # 10 days of data
     historical_data = pd.Series(np.array([50.0] * 240))
-    config = StochasticConfig(n_scenarios=1, horizon_hours=24, noise_multiplier=1.0)
+    # Use 10 scenarios with noise=0 to test tail injection behavior.
+    # When noise=0 and prices are constant, empirical scenarios must be 50.0.
+    # Tail-injected scenarios must be synthetic stress (NOT 50.0).
+    config = StochasticConfig(n_scenarios=10, horizon_hours=24, noise_multiplier=0.0)
     generator = ScenarioGenerator(config)
 
     scenarios = generator.fit_transform(historical_data, seed=42)
 
-    # Since prices are constant at 50, standard deviation is 0.
-    # Therefore, adding 1.0 multiplier of 0 stdev should not change the prices.
-    assert np.all(scenarios == 50.0)
+    n_tail = max(1, int(10 * generator.TAIL_INJECTION_RATIO))
+    n_empirical = 10 - n_tail
+    assert np.all(scenarios[:n_empirical] == 50.0), "Empirical scenarios should be constant"
+    # Tail injection MUST be different from constant 50
+    assert not np.all(scenarios[n_empirical:] == 50.0), "Tail scenarios should be synthetic stress"

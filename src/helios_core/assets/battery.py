@@ -20,6 +20,7 @@ class BatteryAsset:
 
         self.capex_eur = config.capex_eur
         self.cycle_life = config.cycle_life
+        self.grid_tariff_eur_mwh = config.grid_tariff_eur_mwh
 
         if config.initial_soc_mwh > config.capacity_mwh:
             raise PhysicalConstraintError(f"Initial SoC {config.initial_soc_mwh} exceeds capacity {config.capacity_mwh}.")
@@ -34,6 +35,16 @@ class BatteryAsset:
         """
         total_throughput_mwh = self.cycle_life * self.capacity_mwh * 2.0
         return self.capex_eur / total_throughput_mwh
+
+    @property
+    def lcos_kappa_0(self) -> float:
+        """Base linear wear cost (EUR/MWh throughput). ~85% of total LCOS."""
+        return self.marginal_wear_cost_per_mwh * 0.85
+
+    @property
+    def lcos_kappa_1(self) -> float:
+        """Superlinear DoD-dependent wear cost coefficient (EUR/MW^1.5). ~15% of total LCOS."""
+        return self.marginal_wear_cost_per_mwh * 0.15
 
     def step(self, power_mw: float, duration_hours: float) -> None:
         """

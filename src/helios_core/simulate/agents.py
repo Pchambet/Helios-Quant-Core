@@ -1,12 +1,20 @@
+import pandas as pd
 import numpy as np
-from typing import Protocol, Tuple
+from typing import Protocol, Tuple, Any
 from helios_core.optimization.controller import BatteryMPC
 
 class TradingAgent(Protocol):
     """Protocol for all Backtester Agents."""
-    def act(self, current_soc: float, price_forecast: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
+    def act(
+        self,
+        current_soc: float,
+        price_forecast: np.ndarray,
+        past_data: pd.DataFrame | None = None,
+        forecast_weather: pd.DataFrame | None = None
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
         """
         Takes the current SoC and a price forecast for the horizon.
+        Optionally takes historical multi-variate data and the 48h weather forecast.
         Returns:
             p_ch (charge vector)
             p_dis (discharge vector)
@@ -27,7 +35,13 @@ class NaiveHeuristicAgent:
         self.max_charge = max_charge
         self.max_discharge = max_discharge
 
-    def act(self, current_soc: float, price_forecast: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
+    def act(
+        self,
+        current_soc: float,
+        price_forecast: np.ndarray,
+        past_data: pd.DataFrame | None = None,
+        forecast_weather: pd.DataFrame | None = None
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
         horizon = len(price_forecast)
         p_ch = np.zeros(horizon)
         p_dis = np.zeros(horizon)
@@ -54,7 +68,13 @@ class DeterministicMPCAgent:
     def __init__(self, mpc: BatteryMPC):
         self.mpc = mpc
 
-    def act(self, current_soc: float, price_forecast: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
+    def act(
+        self,
+        current_soc: float,
+        price_forecast: np.ndarray,
+        past_data: pd.DataFrame | None = None,
+        forecast_weather: pd.DataFrame | None = None
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
         self.mpc.battery.soc_mwh = current_soc  # Sync Digital Twin
         self.mpc.scaler.fit(price_forecast)
 
@@ -67,24 +87,50 @@ class RobustDROAgent:
     """
     The Risk Manager.
     Uses Wasserstein DRO to optimize for the worst-case distribution.
-    Protects against massive negative shocks and LCOS degradation.
+
+    Post-Audit V4: Full pipeline — RegimeDetector → KNN → Epsilon → DRO.
     """
-    def __init__(self, mpc: BatteryMPC, epsilon: float = 50.0):
+    def __init__(self, mpc: BatteryMPC, epsilon: float = 50.0, generator: Any = None,
+                 risk_manager: Any = None, regime_detector: Any = None):
         self.mpc = mpc
-        self.epsilon = epsilon
+        self.epsilon = epsilon  # Static fallback
+        self.generator = generator
+        self.risk_manager = risk_manager  # DynamicEpsilonManager instance
+        self.regime_detector = regime_detector  # RegimeDetector instance (HMM)
 
-    def act(self, current_soc: float, price_forecast: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
+    def act(
+        self,
+        current_soc: float,
+        price_forecast: np.ndarray,
+        past_data: pd.DataFrame | None = None,
+        forecast_weather: pd.DataFrame | None = None
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
         self.mpc.battery.soc_mwh = current_soc
-        self.mpc.scaler.fit(price_forecast)
 
-        # We need N scenarios for DRO. Here we just duplicate the forecast with shocks.
-        # In a real pipeline, the ScenarioGenerator supplies this.
-        # For the standalone agent, we simulate N=10 bounds around the forecast.
-        N = 10
-        base = np.tile(price_forecast, (N, 1))
-        # Add normal noise proportional to price to create plausible ambiguity
-        noise = np.random.normal(0, np.abs(price_forecast) * 0.2, (N, len(price_forecast)))
-        scenarios = np.maximum(base + noise, -50.0) # Floor at -50
+        if self.generator is not None and past_data is not None and len(past_data) >= 48:
+            # Post-Audit V4: Compute regime mask to filter KNN by market state
+            regime_mask = None
+            if self.regime_detector is not None and 'Price_EUR_MWh' in past_data.columns:
+                regime_mask = self.regime_detector.get_regime_mask(past_data['Price_EUR_MWh'])
+
+            # Physics-Informed execution with regime-filtered KNN
+            scenarios = self.generator.fit_transform(
+                past_data, forecast_weather=forecast_weather, regime_mask=regime_mask
+            )
+        else:
+            # Fallback naive simulation
+            N = 10
+            base = np.tile(price_forecast, (N, 1))
+            noise = np.random.normal(0, np.abs(price_forecast) * 0.2, (N, len(price_forecast)))
+            scenarios = np.maximum(base + noise, -50.0)
+
+        # Post-Audit V3 (Faille 2.3): Fit scaler on the UNION of forecast + scenarios
+        all_prices = np.concatenate([price_forecast.reshape(1, -1), scenarios])
+        self.mpc.scaler.fit(all_prices)
+
+        # Post-Audit V2: Compute epsilon from intra-cluster dispersion (coherent with KNN)
+        if self.risk_manager is not None:
+            self.epsilon = self.risk_manager.compute_epsilon_from_scenarios(scenarios)
 
         p_ch, p_dis, status = self.mpc.solve_robust(scenarios, self.epsilon)
         profit = float(np.sum(p_dis * price_forecast - p_ch * price_forecast))

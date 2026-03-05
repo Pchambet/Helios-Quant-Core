@@ -14,10 +14,13 @@ class BatteryMPC:
     """
     Model Predictive Controller integrating the Battery Digital Twin with CVXPY.
     """
-    def __init__(self, battery: BatteryAsset, scaler: PriceScaler, alpha_slippage: float = 1.0):
+    def __init__(self, battery: BatteryAsset, scaler: PriceScaler, alpha_slippage: float = 1.0, margin_funding_rate: float = 5e-6):
         self.battery = battery
         self.scaler = scaler
         self.alpha_slippage = alpha_slippage
+        # FVA/MVA: hourly funding rate for margin posted to ECC
+        # Default ~50 bps annualized = 0.005 / (365*24) ≈ 5.7e-7, scaled up for significance
+        self.margin_funding_rate = margin_funding_rate
 
     def solve_deterministic(self, expected_prices: np.ndarray) -> Tuple[np.ndarray, np.ndarray, str]:
         """
@@ -46,19 +49,31 @@ class BatteryMPC:
         soc = cp.Variable(T + 1, nonneg=True)
 
         # 3. Objective: Maximize Profit (Minimize Negative Profit)
-        # Note: scaled_prices are passed in. The optimal policy (x) is scale-invariant,
-        # but the objective value (profit) will need inverse scaling later if evaluated.
-        # We replace the naive cyclic_penalty with the formal Levelized Cost of Storage (LCOS).
-        # Since expected_prices are scaled, the marginal wear cost must be equally scaled linearly.
-        marginal_lcos_eur = self.battery.marginal_wear_cost_per_mwh
-        scaled_wear_penalty = self.scaler.scale_difference(marginal_lcos_eur)
+        # Post-Audit V3: Convex LCOS + TURPE grid tariff
+        scaled_kappa_0 = self.scaler.scale_difference(self.battery.lcos_kappa_0)
+        scaled_kappa_1 = self.scaler.scale_difference(self.battery.lcos_kappa_1)
+        scaled_grid_tariff = self.scaler.scale_difference(self.battery.grid_tariff_eur_mwh)
         scaled_alpha = self.scaler.scale_difference(self.alpha_slippage)
 
         profit = p_dis @ scaled_prices - p_ch @ scaled_prices
-        wear = scaled_wear_penalty * cp.sum(p_ch + p_dis)  # type: ignore
+
+        # Convex LCOS: κ₀ * throughput (linear) + κ₁ * Σpower^1.5 (superlinear DoD penalty)
+        # cp.power(x, 1.5) is convex for x >= 0, preserving DCP compliance.
+        wear_linear = scaled_kappa_0 * cp.sum(p_ch + p_dis)  # type: ignore
+        wear_convex = scaled_kappa_1 * cp.sum(  # type: ignore
+            cp.power(p_ch, 1.5) + cp.power(p_dis, 1.5)  # type: ignore
+        )
+
+        # TURPE: fixed network access cost per MWh throughput
+        grid_cost = scaled_grid_tariff * cp.sum(p_ch + p_dis)  # type: ignore
+
         slippage = scaled_alpha * cp.sum(cp.square(p_ch) + cp.square(p_dis))  # type: ignore
 
-        objective = cp.Maximize(profit - wear - slippage)
+        # FVA/MVA: Margin funding cost on net position (Audit Faille 3.2)
+        scaled_margin_rate = self.scaler.scale_difference(self.margin_funding_rate)
+        margin_cost = scaled_margin_rate * cp.sum(cp.abs(p_dis - p_ch))  # type: ignore
+
+        objective = cp.Maximize(profit - wear_linear - wear_convex - grid_cost - slippage - margin_cost)
 
         # 4. Physical Constraints (Linearized Digital Twin)
         constraints = []
@@ -66,18 +81,22 @@ class BatteryMPC:
         # Initial State
         constraints.append(soc[0] == self.battery.soc_mwh)
 
+        # Precompute physical constants outside loop
+        interlock_limit = max(self.battery.max_charge_mw, self.battery.max_discharge_mw)
+        leakage_factor = 1.0 - self.battery.leakage_rate
+        ch_eff = self.battery.efficiency_charge
+        dis_eff = self.battery.efficiency_discharge
+
         for t in range(T):
             # Power Limits
             constraints.append(p_ch[t] <= self.battery.max_charge_mw)
             constraints.append(p_dis[t] <= self.battery.max_discharge_mw)
 
-            # SOC Dynamics (efficiency & leakage)
-            leakage_factor = 1.0 - self.battery.leakage_rate
-            ch_eff = self.battery.efficiency_charge
-            dis_eff = self.battery.efficiency_discharge
+            # Physical Interlock: a single inverter cannot charge AND discharge simultaneously.
+            # This linear constraint is DCP-compliant and preserves Kantorovich duality.
+            constraints.append(p_ch[t] + p_dis[t] <= interlock_limit)
 
-            # Explicit constraint: SOC_{t+1} = SOC_t * (1-leakage) + charge*eff - discharge/eff
-            # Note: CVXPY requires linear operations. This is perfectly linear.
+            # SOC Dynamics (efficiency & leakage)
             constraints.append(
                 soc[t+1] == soc[t] * leakage_factor + p_ch[t] * ch_eff - p_dis[t] / dis_eff
             )
@@ -140,33 +159,48 @@ class BatteryMPC:
         s = cp.Variable(N)
 
         # 4. Objective (Min-Min Dual form)
-        marginal_lcos_eur = self.battery.marginal_wear_cost_per_mwh
-        scaled_wear_penalty = self.scaler.scale_difference(marginal_lcos_eur)
+        # Post-Audit V3: Convex LCOS + TURPE grid tariff (same as deterministic)
+        scaled_kappa_0 = self.scaler.scale_difference(self.battery.lcos_kappa_0)
+        scaled_kappa_1 = self.scaler.scale_difference(self.battery.lcos_kappa_1)
+        scaled_grid_tariff = self.scaler.scale_difference(self.battery.grid_tariff_eur_mwh)
         scaled_alpha = self.scaler.scale_difference(self.alpha_slippage)
 
-        wear = scaled_wear_penalty * cp.sum(p_ch + p_dis)  # type: ignore
-        slippage = scaled_alpha * cp.sum(cp.square(p_ch) + cp.square(p_dis))  # type: ignore
+        wear_linear = scaled_kappa_0 * cp.sum(p_ch + p_dis)  # type: ignore
+        wear_convex = scaled_kappa_1 * cp.sum(  # type: ignore
+            cp.power(p_ch, 1.5) + cp.power(p_dis, 1.5)  # type: ignore
+        )
+        grid_cost = scaled_grid_tariff * cp.sum(p_ch + p_dis)  # type: ignore
+        slippage_base = scaled_alpha * cp.sum(cp.square(p_ch) + cp.square(p_dis))  # type: ignore
+
+        # FVA/MVA: Margin funding cost on net position (Audit Faille 3.2)
+        scaled_margin_rate = self.scaler.scale_difference(self.margin_funding_rate)
+        margin_cost = scaled_margin_rate * cp.sum(cp.abs(p_dis - p_ch))  # type: ignore
 
         # We want to maximize worst-case profit.
         # By strong duality, max_{Q} E_Q[Profit] = min_{lam, s} lam*eps + (1/N) sum(s)
         # Therefore, the objective of the overall problem is to Maximize this lower bound.
-        # Wait, standard DRO minimizes Loss (where Loss = Cost - Revenue).
-        # Loss L(u, xi) = (p_ch @ xi - p_dis @ xi) + wear + slippage
+        # Loss L(u, xi) = (p_ch @ xi - p_dis @ xi) + costs
         # Primal: min_u max_Q E_Q[ L(u, xi) ]
         # Dual: min_{u, lam, s} lam * eps + 1/N * sum(s)
-        # Subject to: s_i >= L(u, xi_i) + lam ||xi - xi_i|| for all xi.
-        # This translates exactly into our code as a global minimization.
 
         objective = cp.Minimize(lam * epsilon + (1/N) * cp.sum(s))  # type: ignore
         constraints = []
 
-        # Robust Dual Constraints (The L1 norm trick to keep it LP core despite QP slippage)
-        # Because we only have linear dependence in xi, the supremum condition simplifies to bounding the dual norm.
-        # For L1 primal distance metric, the dual norm is L_inf.
-        # s_i >= (p_ch @ xi_i - p_dis @ xi_i) + wear + slippage
+        # Robust Dual Constraints with scenario-aware slippage (Audit Faille 2.1)
+        # The slippage amplifier is proportional to each scenario's price deviation
+        # from the mean, capturing liquidity co-movement with extreme prices.
+        mean_scenario = np.mean(scaled_scenarios, axis=0)
 
         for i in range(N):
-            empirical_loss = (p_ch @ scaled_scenarios[i] - p_dis @ scaled_scenarios[i]) + wear + slippage
+            # Per-scenario price deviation amplifies the slippage (capped at 2x)
+            price_dev = np.sum(np.abs(scaled_scenarios[i] - mean_scenario))
+            slippage_amplifier = min(2.0, 1.0 + 0.15 * price_dev)
+            scenario_slippage = slippage_amplifier * slippage_base
+
+            empirical_loss = (
+                (p_ch @ scaled_scenarios[i] - p_dis @ scaled_scenarios[i])
+                + wear_linear + wear_convex + grid_cost + scenario_slippage + margin_cost
+            )
             constraints.append(s[i] >= empirical_loss)
 
         # The dual norm constraint ensuring the supremum over ALL xi is bounded
@@ -181,13 +215,18 @@ class BatteryMPC:
 
         # 5. Physical Constraints (Identical to Deterministic)
         constraints.append(soc[0] == self.battery.soc_mwh)
+        interlock_limit = max(self.battery.max_charge_mw, self.battery.max_discharge_mw)
+        leakage_factor = 1.0 - self.battery.leakage_rate
+        ch_eff = self.battery.efficiency_charge
+        dis_eff = self.battery.efficiency_discharge
+
         for t in range(T):
             constraints.append(p_ch[t] <= self.battery.max_charge_mw)
             constraints.append(p_dis[t] <= self.battery.max_discharge_mw)
 
-            leakage_factor = 1.0 - self.battery.leakage_rate
-            ch_eff = self.battery.efficiency_charge
-            dis_eff = self.battery.efficiency_discharge
+            # Physical Interlock: prevent simultaneous charge + discharge
+            constraints.append(p_ch[t] + p_dis[t] <= interlock_limit)
+
             constraints.append(
                 soc[t+1] == soc[t] * leakage_factor + p_ch[t] * ch_eff - p_dis[t] / dis_eff
             )

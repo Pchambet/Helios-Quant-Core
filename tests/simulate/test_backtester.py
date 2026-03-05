@@ -11,7 +11,13 @@ class DummyAgent(TradingAgent):
     An agent that performs exactly 1 cycle per 24h horizon
     Charge 1MW at t=0, discharge 1MW at t=1.
     """
-    def act(self, current_soc: float, price_forecast: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
+    def act(
+        self,
+        current_soc: float,
+        price_forecast: np.ndarray,
+        past_data: pd.DataFrame | None = None,
+        forecast_weather: pd.DataFrame | None = None
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
         horizon = len(price_forecast)
         p_ch = np.zeros(horizon)
         p_dis = np.zeros(horizon)

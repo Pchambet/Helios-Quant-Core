@@ -18,12 +18,12 @@ from helios_core.stochastic.config import StochasticConfig
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 def main() -> None:
-    print("\n" + "="*60)
-    print(" HELIOS-QUANT-CORE : EPOCH 2022 CRISIS BENCHMARK ")
-    print("="*60 + "\n")
+    print("\n============================================================")
+    print(" HELIOS-QUANT-CORE : EPOCH 2023 NORMAL BENCHMARK ")
+    print("============================================================\n")
 
     # 1. Load the immutable dataset
-    loader = HistoricalCrisisLoader(start_date="2022-08-01", end_date="2022-08-31")
+    loader = HistoricalCrisisLoader(start_date="2023-05-01", end_date="2023-05-31")
     df = loader.fetch_data()
     print(f"[DATA] Loaded {len(df)} hourly observations from {df.index[0]} to {df.index[-1]}.")
     print(f"[DATA] Maximum Extreme Price observed: {df['Price_EUR_MWh'].max():.2f} EUR/MWh\n")
@@ -122,8 +122,8 @@ def generate_tear_sheet(df: pd.DataFrame, history_dfs: dict[str, pd.DataFrame]) 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 12), sharex=True, gridspec_kw={'height_ratios': [2, 2, 1.5]})
 
     # A. Price Volatility
-    ax1.plot(df.index, df['Price_EUR_MWh'], color='cyan', linewidth=1, alpha=0.9, label='EPEX SPOT (Aug 2022 Crisis)')
-    ax1.set_title("Market Environment: The August 2022 Energy Shock", fontsize=14, pad=15)
+    ax1.plot(df.index, df['Price_EUR_MWh'], color='cyan', linewidth=1, alpha=0.9, label='EPEX SPOT (May 2023)')
+    ax1.set_title("Market Environment: May 2023 (Normal Conditions)", fontsize=14, pad=15)
     ax1.set_ylabel("Price (€ / MWh)")
     ax1.grid(True, alpha=0.2)
     ax1.legend(loc="upper left")
@@ -165,9 +165,8 @@ def generate_tear_sheet(df: pd.DataFrame, history_dfs: dict[str, pd.DataFrame]) 
     plt.tight_layout()
 
     os.makedirs("reports", exist_ok=True)
-    out_path = "reports/benchmark_august_2022.png"
-    plt.savefig(out_path, dpi=300, bbox_inches='tight')
-    logging.info(f"Visual Tear Sheet exported successfully to {out_path}")
+    fig.savefig("reports/benchmark_may_2023.png", dpi=300, bbox_inches='tight')
+    logging.info("Visual Tear Sheet exported successfully to reports/benchmark_may_2023.png")
 
 
 if __name__ == "__main__":

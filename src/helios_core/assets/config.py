@@ -11,3 +11,4 @@ class BatteryConfig(BaseModel):
     capex_eur: float = Field(default=300000.0, ge=0.0, description="Total capital expenditure of the battery in Euros.")
     cycle_life: int = Field(default=5000, gt=0, description="Total full equivalent cycles before end of life.")
     initial_soc_mwh: float = Field(default=0.0, ge=0, description="Initial state of charge.")
+    grid_tariff_eur_mwh: float = Field(default=5.0, ge=0.0, description="Network access tariff (TURPE) in EUR per MWh of throughput.")

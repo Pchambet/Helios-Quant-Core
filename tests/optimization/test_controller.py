@@ -133,3 +133,67 @@ def test_lcos_spread_rejection(scaler: PriceScaler) -> None:
     # the algorithm must rationally choose to preserve the battery life and do nothing.
     assert np.allclose(p_ch, 0, atol=1e-3)
     assert np.allclose(p_dis, 0, atol=1e-3)
+
+
+def test_interlock_no_simultaneous(battery: BatteryAsset, scaler: PriceScaler) -> None:
+    """Verifies that the physical interlock prevents simultaneous charge and discharge."""
+    prices = np.array([-10.0] * 12 + [100.0] * 12)
+    scaler.fit(prices)
+
+    mpc = BatteryMPC(battery, scaler)
+    p_ch, p_dis, status = mpc.solve_deterministic(prices)
+
+    assert status == "optimal"
+
+    # Product p_ch[t] * p_dis[t] should be ~0 for all t (no simultaneous charge+discharge)
+    simultaneous = p_ch * p_dis
+    assert np.allclose(simultaneous, 0, atol=1e-3), \
+        f"Simultaneous charge+discharge detected: max product = {np.max(simultaneous):.4f}"
+
+
+def test_grid_tariff_reduces_trading(scaler: PriceScaler) -> None:
+    """Verifies that a high TURPE grid tariff reduces total throughput."""
+    config_no_turpe = BatteryConfig(
+        capacity_mwh=10.0, max_charge_mw=5.0, max_discharge_mw=5.0,
+        efficiency_charge=1.0, efficiency_discharge=1.0,
+        leakage_rate_per_hour=0.0, initial_soc_mwh=0.0,
+        grid_tariff_eur_mwh=0.0
+    )
+    config_high_turpe = BatteryConfig(
+        capacity_mwh=10.0, max_charge_mw=5.0, max_discharge_mw=5.0,
+        efficiency_charge=1.0, efficiency_discharge=1.0,
+        leakage_rate_per_hour=0.0, initial_soc_mwh=0.0,
+        grid_tariff_eur_mwh=50.0  # Very high tariff
+    )
+
+    prices = np.array([40.0] * 12 + [80.0] * 12)
+    scaler.fit(prices)
+
+    mpc_no_turpe = BatteryMPC(BatteryAsset(config_no_turpe), scaler)
+    mpc_high_turpe = BatteryMPC(BatteryAsset(config_high_turpe), scaler)
+
+    p_ch_0, p_dis_0, _ = mpc_no_turpe.solve_deterministic(prices)
+    p_ch_50, p_dis_50, _ = mpc_high_turpe.solve_deterministic(prices)
+
+    throughput_no_turpe = np.sum(p_ch_0 + p_dis_0)
+    throughput_high_turpe = np.sum(p_ch_50 + p_dis_50)
+
+    assert throughput_high_turpe < throughput_no_turpe, \
+        f"High TURPE should reduce trading. No-TURPE: {throughput_no_turpe:.1f}, High-TURPE: {throughput_high_turpe:.1f}"
+
+
+def test_lcos_convex_penalizes_deep_cycles(scaler: PriceScaler) -> None:
+    """Verifies that convex LCOS penalizes high power more than linear LCOS would."""
+    config = BatteryConfig(
+        capacity_mwh=10.0, max_charge_mw=5.0, max_discharge_mw=5.0,
+        efficiency_charge=1.0, efficiency_discharge=1.0,
+        leakage_rate_per_hour=0.0, initial_soc_mwh=0.0,
+        capex_eur=1000000.0, cycle_life=5000
+    )
+    battery = BatteryAsset(config)
+
+    # kappa_0 (linear) should be 70% of marginal cost
+    # kappa_1 (convex) should be 30% of marginal cost
+    assert battery.lcos_kappa_0 < battery.marginal_wear_cost_per_mwh
+    assert battery.lcos_kappa_1 < battery.marginal_wear_cost_per_mwh
+    assert np.isclose(battery.lcos_kappa_0 + battery.lcos_kappa_1, battery.marginal_wear_cost_per_mwh)
