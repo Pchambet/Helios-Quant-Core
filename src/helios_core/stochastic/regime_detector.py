@@ -42,7 +42,7 @@ class RegimeDetector:
             return
 
         # Build daily feature matrix: [mean_price, std_price, max_price]
-        price_array = prices.values
+        price_array = prices.to_numpy(dtype=float)
         n_days = len(price_array) // 24
 
         if n_days < 5:
@@ -84,7 +84,7 @@ class RegimeDetector:
         if not self._is_fitted or self.model is None:
             return -1
 
-        price_array = prices.values
+        price_array = prices.to_numpy(dtype=float)
         n_hours = min(len(price_array), self.lookback_days * 24)
         recent = price_array[-n_hours:]
 
@@ -118,7 +118,7 @@ class RegimeDetector:
         if not self._is_fitted or self.model is None:
             return np.ones(max(1, len(prices) - 23), dtype=bool)
 
-        price_array = prices.values
+        price_array = prices.to_numpy(dtype=float)
         n_days = len(price_array) // 24
 
         if n_days < 2:

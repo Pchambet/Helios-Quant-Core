@@ -33,7 +33,7 @@ class WalkForwardBacktester:
         self.history: List[Dict[str, Any]] = []
 
     def run(self) -> dict[str, float]:
-        prices = self.data['Price_EUR_MWh'].values
+        prices = self.data['Price_EUR_MWh'].to_numpy(dtype=float)
         total_steps = len(prices)
 
         gross_revenue = 0.0
