@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from typing import Tuple
 
+from helios_core.assets.battery import BatteryAsset
+from helios_core.assets.config import BatteryConfig
 from helios_core.simulate.metrics import RiskMetrics
 from helios_core.simulate.backtester import WalkForwardBacktester
 from helios_core.simulate.agents import TradingAgent
@@ -16,7 +18,8 @@ class DummyAgent(TradingAgent):
         current_soc: float,
         price_forecast: np.ndarray,
         past_data: pd.DataFrame | None = None,
-        forecast_weather: pd.DataFrame | None = None
+        forecast_weather: pd.DataFrame | None = None,
+        model_error: float | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, float]:
         horizon = len(price_forecast)
         p_ch = np.zeros(horizon)
@@ -58,8 +61,18 @@ def test_backtester_no_leakage() -> None:
 
     agent = DummyAgent()
     metrics = RiskMetrics(capex_eur=300000.0, cycle_life=5000, capacity_mwh=10.0)
+    # Efficacité 1.0, fuite 0 : charge 1MW + discharge 1MW reste faisable (0→1→0 MWh)
+    config = BatteryConfig(
+        capacity_mwh=10.0,
+        max_charge_mw=5.0,
+        max_discharge_mw=5.0,
+        efficiency_charge=1.0,
+        efficiency_discharge=1.0,
+        leakage_rate_per_hour=0.0,
+    )
+    physical_asset = BatteryAsset(config)
 
-    backtester = WalkForwardBacktester(df, agent, metrics)
+    backtester = WalkForwardBacktester(df, agent, metrics, physical_asset=physical_asset)
     # It iterators 3 days of 24h.
 
     report = backtester.run()

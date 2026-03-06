@@ -9,17 +9,48 @@ class ScenarioGenerator:
     for the Distributionally Robust Controller. Conditioned by KNN on physical weather if provided.
 
     Post-Audit V3: Supports regime filtering and tail injection (Faille 4.2).
+    Point 8: Uses isolated np.random.Generator for reproducibility and parallel safety.
     """
 
     # Fraction of scenarios reserved for synthetic tail stress tests
-    # Fraction of scenarios reserved for synthetic tail stress tests
     TAIL_INJECTION_RATIO = 0.03
 
-    def __init__(self, config: StochasticConfig):
+    EPEX_MIN = -500.0
+    EPEX_MAX = 3000.0
+
+    def _generate_ar1_process(
+        self,
+        mu: float,
+        sigma: float,
+        rho: float,
+        horizon: int,
+        rng: Optional[np.random.Generator] = None,
+    ) -> np.ndarray:
+        """
+        AR(1): X_t = mu + rho*(X_{t-1} - mu) + eps_t, eps_t ~ N(0, sigma*sqrt(1-rho^2)).
+        Restaure l'autocorrélation temporelle (mémoire) vs bruit IID pathologique.
+        """
+        gen = rng if rng is not None else self.rng
+        X = np.zeros(horizon)
+        X[0] = gen.normal(mu, sigma)
+        cond_std = sigma * np.sqrt(1 - rho**2)
+        for t in range(1, horizon):
+            X[t] = mu + rho * (X[t - 1] - mu) + gen.normal(0, cond_std)
+        return X
+
+    def __init__(
+        self,
+        config: StochasticConfig,
+        seed: Optional[int] = None,
+        rng: Optional[np.random.Generator] = None,
+    ):
         self.config = config
         self.n_scenarios = self.config.n_scenarios
         self.horizon = self.config.horizon_hours
         self.noise = self.config.noise_multiplier
+        self.rng = (
+            rng if rng is not None else np.random.default_rng(seed)
+        )
 
     def fit_transform(
         self,
@@ -53,8 +84,9 @@ class ScenarioGenerator:
         # For Day-Ahead markets (24h chunks), we can slice the series into independent rolling windows
         n_available_windows = len(historical_data) - self.horizon + 1
 
-        if seed is not None:
-            np.random.seed(seed)
+        rng = (
+            np.random.default_rng(seed) if seed is not None else self.rng
+        )
 
         # Reserve slots for tail injection (Audit Faille 4.2)
         n_tail = max(1, int(self.n_scenarios * self.TAIL_INJECTION_RATIO))
@@ -117,14 +149,12 @@ class ScenarioGenerator:
             strict_indices = valid_indices[knn_indices[0]]
 
             # Bootstrap from the strict physical matches to fill the empirical scenario quota
-            start_indices = np.random.choice(strict_indices, size=n_empirical, replace=True)
+            start_indices = rng.choice(strict_indices, size=n_empirical, replace=True)
         else:
             # Bootstrapping from valid windows only
-            start_indices = valid_indices[np.random.choice(
-                len(valid_indices),
-                size=n_empirical,
-                replace=True
-            )]
+            start_indices = valid_indices[
+                rng.choice(len(valid_indices), size=n_empirical, replace=True)
+            ]
 
         # Build the empirical (N_empirical, Horizon) matrix
         price_array = historical_data['Price_EUR_MWh'].to_numpy(dtype=float)
@@ -133,32 +163,42 @@ class ScenarioGenerator:
         for i, start_idx in enumerate(start_indices[:n_empirical]):
             scenarios[i, :] = price_array[start_idx : start_idx + self.horizon] # type: ignore
 
-        # Tail Injection: Synthetic stress scenarios (Audit Faille 4.2)
-        # These cover black swans the history may not contain.
+        # Tail Injection: AR(1) synthétique (Post-Audit: remplace IID pathologique)
         mean_price = np.mean(price_array)
         for j in range(n_tail):
             tail_idx = n_empirical + j
-            stress_type = j % 3  # Cycle through 3 stress types
+            stress_type = j % 3
 
             if stress_type == 0:
-                # Prolonged negative prices (renewable surplus)
-                scenarios[tail_idx, :] = np.random.uniform(-100, -20, self.horizon)
+                # Prolonged negative prices (renewable surplus) — AR(1)
+                scenarios[tail_idx, :] = self._generate_ar1_process(
+                    mu=-50.0, sigma=20.0, rho=0.85, horizon=self.horizon, rng=rng
+                )
             elif stress_type == 1:
-                # Price cap scenario (regulatory intervention, e.g., 180 EUR/MWh)
-                scenarios[tail_idx, :] = np.clip(
-                    np.random.normal(180, 20, self.horizon), 50, 180
+                # Price cap scenario (intervention réglementaire) — AR(1)
+                scenarios[tail_idx, :] = self._generate_ar1_process(
+                    mu=250.0, sigma=50.0, rho=0.85, horizon=self.horizon, rng=rng
                 )
             else:
-                # Extreme spike (5x mean price for 6 consecutive hours)
-                base = np.random.normal(mean_price, mean_price * 0.2, self.horizon)
-                spike_start = np.random.randint(0, max(1, self.horizon - 6))
-                base[spike_start:spike_start + 6] = mean_price * 5.0
+                # Crisis regime — AR(1) + pic 6h
+                base = self._generate_ar1_process(
+                    mu=mean_price * 1.5,
+                    sigma=mean_price * 0.3,
+                    rho=0.90,
+                    horizon=self.horizon,
+                    rng=rng,
+                )
+                spike_start = rng.integers(0, max(1, self.horizon - 6))
+                base[spike_start : spike_start + 6] = mean_price * 5.0
                 scenarios[tail_idx, :] = base
 
-        # Optional: Add Gaussian noise to emulate out-of-distribution shocks
+        # Optional: Add Gaussian noise (IID — amélioration future: bruit AR(1))
         if self.noise > 0.0:
             volatility = np.std(scenarios, axis=0) * self.noise
-            shock = np.random.normal(0, volatility, size=(self.n_scenarios, self.horizon))
+            shock = rng.normal(0, volatility, size=(self.n_scenarios, self.horizon))
             scenarios += shock
+
+        # Bornes physiques EPEX SPOT Day-Ahead
+        scenarios = np.clip(scenarios, self.EPEX_MIN, self.EPEX_MAX)
 
         return scenarios

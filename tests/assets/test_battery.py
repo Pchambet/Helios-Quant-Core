@@ -61,12 +61,16 @@ def test_energy_constraint_violation_overcharge() -> None:
         battery.step(power_mw=12.0, duration_hours=1.0)
 
 def test_energy_constraint_violation_overdischarge() -> None:
-    config = BatteryConfig(capacity_mwh=10, max_charge_mw=15, max_discharge_mw=15, efficiency_discharge=1.0, initial_soc_mwh=5.0)
+    config = BatteryConfig(
+        capacity_mwh=10, max_charge_mw=15, max_discharge_mw=15,
+        efficiency_discharge=1.0, initial_soc_mwh=5.0, leakage_rate_per_hour=0.0
+    )
     battery = BatteryAsset(config)
 
-    # Discharging 6 MWh when SoC is only 5 MWh
-    with pytest.raises(PhysicalConstraintError, match="Attempt to over-discharge"):
-        battery.step(power_mw=-6.0, duration_hours=1.0)
+    # Demande 6 MW alors que SoC = 5 MWh → dégradation gracieuse : on écrête au max (5 MW)
+    p_ch, p_dis = battery.step(power_mw=-6.0, duration_hours=1.0)
+    assert battery.soc_mwh == 0.0
+    assert p_ch == 0.0 and p_dis == 5.0  # Exécution réelle = 5 MW décharge (eff=1)
 
 def test_leakage() -> None:
     config = BatteryConfig(capacity_mwh=10, max_charge_mw=5, max_discharge_mw=5, leakage_rate_per_hour=0.01, initial_soc_mwh=10.0)

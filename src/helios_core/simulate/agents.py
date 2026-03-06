@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Protocol, Tuple, Any
+from typing import Any, Optional, Protocol, Tuple
 from helios_core.optimization.controller import BatteryMPC
 
 class TradingAgent(Protocol):
@@ -10,7 +10,8 @@ class TradingAgent(Protocol):
         current_soc: float,
         price_forecast: np.ndarray,
         past_data: pd.DataFrame | None = None,
-        forecast_weather: pd.DataFrame | None = None
+        forecast_weather: pd.DataFrame | None = None,
+        model_error: float | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, float]:
         """
         Takes the current SoC and a price forecast for the horizon.
@@ -40,7 +41,8 @@ class NaiveHeuristicAgent:
         current_soc: float,
         price_forecast: np.ndarray,
         past_data: pd.DataFrame | None = None,
-        forecast_weather: pd.DataFrame | None = None
+        forecast_weather: pd.DataFrame | None = None,
+        model_error: float | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, float]:
         horizon = len(price_forecast)
         p_ch = np.zeros(horizon)
@@ -73,9 +75,10 @@ class DeterministicMPCAgent:
         current_soc: float,
         price_forecast: np.ndarray,
         past_data: pd.DataFrame | None = None,
-        forecast_weather: pd.DataFrame | None = None
+        forecast_weather: pd.DataFrame | None = None,
+        model_error: float | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, float]:
-        self.mpc.battery.soc_mwh = current_soc  # Sync Digital Twin
+        # MPC.battery est le physical_asset du backtester — soc déjà à jour (Point 6)
         self.mpc.scaler.fit(price_forecast)
 
         p_ch, p_dis, status = self.mpc.solve_deterministic(price_forecast)
@@ -89,24 +92,34 @@ class RobustDROAgent:
     Uses Wasserstein DRO to optimize for the worst-case distribution.
 
     Post-Audit V4: Full pipeline — RegimeDetector → KNN → Epsilon → DRO.
+    Point 8: Uses isolated Generator for fallback noise (reproducibility, parallel safety).
     """
-    def __init__(self, mpc: BatteryMPC, epsilon: float = 50.0, generator: Any = None,
-                 risk_manager: Any = None, regime_detector: Any = None):
+    def __init__(
+        self,
+        mpc: BatteryMPC,
+        epsilon: float = 50.0,
+        generator: Any = None,
+        risk_manager: Any = None,
+        regime_detector: Any = None,
+        seed: Optional[int] = None,
+        rng: Optional[np.random.Generator] = None,
+    ):
         self.mpc = mpc
-        self.epsilon = epsilon  # Static fallback
+        self.epsilon = epsilon
         self.generator = generator
-        self.risk_manager = risk_manager  # DynamicEpsilonManager instance
-        self.regime_detector = regime_detector  # RegimeDetector instance (HMM)
+        self.risk_manager = risk_manager
+        self.regime_detector = regime_detector
+        self.rng = rng if rng is not None else np.random.default_rng(seed)
 
     def act(
         self,
         current_soc: float,
         price_forecast: np.ndarray,
         past_data: pd.DataFrame | None = None,
-        forecast_weather: pd.DataFrame | None = None
+        forecast_weather: pd.DataFrame | None = None,
+        model_error: float | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, float]:
-        self.mpc.battery.soc_mwh = current_soc
-
+        # MPC.battery est le physical_asset du backtester — soc déjà à jour (Point 6)
         if self.generator is not None and past_data is not None and len(past_data) >= 48:
             # Post-Audit V4: Compute regime mask to filter KNN by market state
             regime_mask = None
@@ -121,16 +134,26 @@ class RobustDROAgent:
             # Fallback naive simulation
             N = 10
             base = np.tile(price_forecast, (N, 1))
-            noise = np.random.normal(0, np.abs(price_forecast) * 0.2, (N, len(price_forecast)))
+            noise = self.rng.normal(
+                0, np.abs(price_forecast) * 0.2, (N, len(price_forecast))
+            )
             scenarios = np.maximum(base + noise, -50.0)
 
         # Post-Audit V3 (Faille 2.3): Fit scaler on the UNION of forecast + scenarios
         all_prices = np.concatenate([price_forecast.reshape(1, -1), scenarios])
         self.mpc.scaler.fit(all_prices)
 
-        # Post-Audit V2: Compute epsilon from intra-cluster dispersion (coherent with KNN)
+        # Post-Epsilon-Calibration: ε = f(intra-cluster vol, entropie régime)
+        regime_uncertainty = None
+        if self.regime_detector is not None and past_data is not None and "Price_EUR_MWh" in past_data.columns:
+            regime_uncertainty = self.regime_detector.get_regime_uncertainty(past_data["Price_EUR_MWh"])
+
         if self.risk_manager is not None:
-            self.epsilon = self.risk_manager.compute_epsilon_from_scenarios(scenarios)
+            self.epsilon = self.risk_manager.compute_epsilon_from_scenarios(
+                scenarios,
+                regime_uncertainty=regime_uncertainty,
+                model_error=model_error,
+            )
 
         p_ch, p_dis, status = self.mpc.solve_robust(scenarios, self.epsilon)
         profit = float(np.sum(p_dis * price_forecast - p_ch * price_forecast))

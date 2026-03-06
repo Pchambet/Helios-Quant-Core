@@ -1,18 +1,22 @@
 import pandas as pd
 import numpy as np
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from helios_core.assets.battery import BatteryAsset
 from helios_core.simulate.agents import TradingAgent
 from helios_core.simulate.metrics import RiskMetrics
 from helios_core.stochastic.risk_manager import DynamicEpsilonManager
-from helios_core.stochastic.forecaster import SeasonalARMAForecaster
+from helios_core.stochastic.price_forecaster import LightGBMPriceForecaster
+
+if TYPE_CHECKING:
+    from helios_core.stochastic.regime_detector import RegimeDetector
 
 logger = logging.getLogger(__name__)
 
 class WalkForwardBacktester:
     """
     Industrial Backtesting Engine for the Day-Ahead Market.
-    Implements a 48h Receding Horizon with ARMA(1,1) seasonal forecast + EMA(3) proxy.
+    Implements a 48h Receding Horizon with LightGBM tabular forecaster (Minimalisme Structurel).
     Executes trades in 24h blocks to mirror actual EPEX SPOT market mechanics.
     """
     def __init__(
@@ -20,17 +24,56 @@ class WalkForwardBacktester:
         data: pd.DataFrame,
         agent: TradingAgent,
         metrics: RiskMetrics,
-        risk_manager: Optional[DynamicEpsilonManager] = None
+        physical_asset: BatteryAsset,
+        risk_manager: Optional[DynamicEpsilonManager] = None,
+        regime_detector: Optional["RegimeDetector"] = None,
+        seed: Optional[int] = None,
     ):
         self.data = data
         self.agent = agent
         self.metrics = metrics
+        self.physical_asset = physical_asset
         self.risk_manager = risk_manager
-        self.forecaster = SeasonalARMAForecaster(lookback_days=14, arma_order=(1, 0, 1))
+        self.regime_detector = regime_detector
+        self.forecaster = LightGBMPriceForecaster(lookback_days=56)
+        self.rng = np.random.default_rng(seed)
 
-        # State Tracking
-        self.current_soc = 0.0
+        # Causal RegimeDetector: fit par le backtester, jamais par le script externe
+        self._regime_fitted_once = False
+        self.burn_in_period = 168  # 7 jours minimum pour convergence HMM décente
+
+        # State: SoC détenu par le physical_asset (SSOT — Points 6 & 11)
         self.history: List[Dict[str, Any]] = []
+
+    def _build_causal_weather_forecast(self, t: int, horizon: int = 48) -> pd.DataFrame:
+        """
+        Construit un forecast météo par persistance (100% causal).
+        Utilise exclusivement la fenêtre [t - horizon : t].
+        """
+        if t >= horizon:
+            # On prend les 'horizon' dernières heures connues
+            causal_forecast = self.data.iloc[t - horizon : t].copy()
+        else:
+            # Fallback pour le début du backtest (t < horizon)
+            # On prend ce qui est disponible [0:t] et on le répète (tiling) pour atteindre l'horizon
+            if t == 0:
+                # Cas limite : t=0, on duplique la toute première ligne
+                causal_forecast = pd.concat([self.data.iloc[[0]]] * horizon, ignore_index=False)
+            else:
+                available_data = self.data.iloc[0:t]
+                repeats = (horizon // len(available_data)) + 1
+                causal_forecast = pd.concat([available_data] * repeats, ignore_index=False).iloc[:horizon].copy()
+
+        # Étape cruciale : On réindexe pour simuler une projection future [t : t + horizon]
+        # Cela maintient la compatibilité avec la logique des agents (ex: RobustDROAgent)
+        if (t + horizon) <= len(self.data):
+            causal_forecast.index = self.data.index[t : t + horizon].copy()
+        else:
+            causal_forecast.index = pd.date_range(
+                start=self.data.index[t], periods=horizon, freq="h"
+            )
+
+        return causal_forecast
 
     def run(self) -> dict[str, float]:
         prices = self.data['Price_EUR_MWh'].to_numpy(dtype=float)
@@ -50,74 +93,58 @@ class WalkForwardBacktester:
 
         # Step by 24h blocks (Day-Ahead Clearing)
         for t in range(0, total_steps, 24):
+            # -- GESTION CAUSALE DU REGIME DETECTOR (Faille 4.2) --
+            if self.regime_detector is not None and not self._regime_fitted_once:
+                if t >= self.burn_in_period:
+                    past_prices = self.data["Price_EUR_MWh"].iloc[:t]
+                    logger.info(
+                        f"Fitting RegimeDetector at t={t} with {len(past_prices)} past observations."
+                    )
+                    self.regime_detector.fit(past_prices)
+                    self._regime_fitted_once = True
+
             # Post-Audit V2 (Faille 1.1): STRICT INFORMATION BARRIER
-            realized_prices = prices[t: t + 24]  # Only used for PnL execution
+            realized_prices = prices[t : t + 24]  # Only used for PnL execution
 
             if len(realized_prices) < 24:
                 # Discard incomplete final day
                 break
 
-            # D+1 Forecast: ARMA(1,1) seasonal model (Post-Audit V4)
-            # Uses only prices[:t] — strictly causal, no look-ahead.
-            past_prices = prices[:t]
-            price_forecast_d1 = self.forecaster.forecast(past_prices, horizon=24)
-
-            # D+2 Forecast: EMA(3) proxy (Post-Audit V3, Faille 1.2)
-            # EMA captures 63% of a trend shift in 3 days vs ~50% in 7 for SMA.
-            # α = 2/(span+1) = 2/4 = 0.5
-            ema_alpha = 0.5
-            proxy_forecast_d2 = np.zeros(24)
-            for h in range(24):
-                # Collect past daily prices at hour h (up to 7 days back)
-                past_vals = []
-                for d in range(1, 8):
-                    past_idx = t + h - 24 * d
-                    if past_idx >= 0:
-                        past_vals.append(prices[past_idx])
-
-                if past_vals:
-                    # Compute EMA: most recent value first (past_vals[0] = yesterday)
-                    ema = past_vals[0]
-                    for v in past_vals[1:]:
-                        ema = ema_alpha * ema + (1 - ema_alpha) * v
-                    proxy_forecast_d2[h] = ema
-                else:
-                    proxy_forecast_d2[h] = price_forecast_d1[h]
-
-            # The 48h Extended Horizon (fully causal — no future data)
-            full_forecast = np.concatenate([price_forecast_d1, proxy_forecast_d2])
-
-            # NOTE: Dynamic Epsilon is now managed internally by RobustDROAgent
-            # (Post-Audit V2: epsilon computed from intra-KNN cluster variance)
+            # Price forecast 48h (LightGBM — causal, features physiques)
+            # Double Bouclier: forecast retourne (prices, cve) pour calibration ε dynamique
+            past_data = self.data.iloc[:t]
+            full_forecast, forecast_cve = self.forecaster.forecast(past_data, horizon=48)
 
             # 3. Agent Decision (Plans on 48h)
-            past_data = self.data.iloc[:t]
+            # Causal forecast: persistance (Faille 1.3 — élimination du look-ahead).
+            # Utilise uniquement [t - 48 : t], réindexé pour compatibilité agents.
+            forecast_weather = self._build_causal_weather_forecast(t, horizon=48)
 
-            # Post-Audit V2 (Faille 1.3): Inject ECMWF noise on weather forecast
-            # to prevent meteo look-ahead bias. Real observations are corrupted with
-            # calibrated Gaussian noise to simulate operational forecast uncertainty.
-            if t + 48 <= len(self.data):
-                forecast_weather = self.data.iloc[t : t + 48].copy()
-            else:
-                forecast_weather = self.data.iloc[t:].copy()
-
+            # Application du bruit physique sur le forecast causal (erreur ECMWF simulée)
             for col, sigma in PHYSICAL_NOISE_STD.items():
                 if col in forecast_weather.columns and sigma > 0.0:
-                    noise = np.random.normal(0, sigma, len(forecast_weather))
+                    noise = self.rng.normal(0, sigma, len(forecast_weather))
                     forecast_weather[col] = np.maximum(0, forecast_weather[col] + noise)
 
+            # current_soc lu depuis le physical_asset (SSOT)
+            current_soc = self.physical_asset.soc_mwh
             p_ch_vec, p_dis_vec, _ = self.agent.act(
-                current_soc=self.current_soc,
+                current_soc=current_soc,
                 price_forecast=full_forecast,
                 past_data=past_data,
-                forecast_weather=forecast_weather
+                forecast_weather=forecast_weather,
+                model_error=forecast_cve,
             )
 
-            # 4. Partial Execution (We ONLY execute the 24h truthful Market day, throwing away the proxy)
+            # 4. Partial Execution — le backtester applique les actions via BatteryAsset.step()
             for i in range(24):
-                p_ch_now = p_ch_vec[i]
-                p_dis_now = p_dis_vec[i]
+                p_ch_req = p_ch_vec[i]
+                p_dis_req = p_dis_vec[i]
                 current_price = realized_prices[i]
+
+                # Physique appliquée par BatteryAsset.step() — retourne (p_ch, p_dis) exécutés
+                net_power = float(p_ch_req - p_dis_req)
+                p_ch_now, p_dis_now = self.physical_asset.step(net_power, 1.0)
 
                 if p_ch_now > 0:
                     cost = p_ch_now * current_price
@@ -128,17 +155,13 @@ class WalkForwardBacktester:
 
                 throughput += (p_ch_now + p_dis_now)
 
-                # Update true physical SoC state
-                self.current_soc += (p_ch_now * 0.95) - (p_dis_now / 0.95)
-                self.current_soc = np.clip(self.current_soc, 0.0, self.metrics.capacity_mwh)
-
-                # Log
+                # Log (valeurs exécutées pour cohérence PnL/SoC)
                 self.history.append({
                     "time": self.data.index[t + i],
                     "price": current_price,
                     "p_ch": p_ch_now,
                     "p_dis": p_dis_now,
-                    "soc": self.current_soc
+                    "soc": self.physical_asset.soc_mwh
                 })
 
             if t % (24 * 10) == 0:

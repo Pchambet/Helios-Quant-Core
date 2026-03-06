@@ -6,8 +6,8 @@ from helios_core.stochastic.generator import ScenarioGenerator
 
 
 def test_scenario_generator_valid_output() -> None:
-    # 10 days of hourly data (240 hours)
-    historical_data = pd.Series(np.random.normal(50, 10, 240))
+    rng = np.random.default_rng(42)
+    historical_data = pd.Series(rng.normal(50, 10, 240))
     config = StochasticConfig(n_scenarios=5, horizon_hours=24, noise_multiplier=0.0)
     generator = ScenarioGenerator(config)
 
@@ -28,8 +28,8 @@ def test_scenario_generator_with_nan() -> None:
 
 
 def test_scenario_generator_insufficient_data() -> None:
-    # Only 20 hours of data, but horizon requires 24
-    historical_data = pd.Series(np.random.normal(50, 10, 20))
+    rng = np.random.default_rng(42)
+    historical_data = pd.Series(rng.normal(50, 10, 20))
     config = StochasticConfig(n_scenarios=2, horizon_hours=24)
     generator = ScenarioGenerator(config)
 
@@ -38,8 +38,8 @@ def test_scenario_generator_insufficient_data() -> None:
 
 
 def test_scenario_generator_insufficient_windows() -> None:
-    # 30 hours of data. This allows 30 - 24 + 1 = 7 possible windows.
-    historical_data = pd.Series(np.random.normal(50, 10, 30))
+    rng = np.random.default_rng(42)
+    historical_data = pd.Series(rng.normal(50, 10, 30))
     config = StochasticConfig(n_scenarios=10, horizon_hours=24)  # Asking for 10 windows
     generator = ScenarioGenerator(config)
 

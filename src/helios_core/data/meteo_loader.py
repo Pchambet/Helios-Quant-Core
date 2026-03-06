@@ -3,7 +3,12 @@ import pandas as pd
 import logging
 from typing import Dict, Any, List, Tuple
 
+from helios_core.exceptions import DataIngestionError
+from helios_core.utils.paths import ensure_data_dir
+
 logger = logging.getLogger(__name__)
+
+HTTP_TIMEOUT = 15
 
 class HistoricalMeteoLoader:
     """
@@ -38,7 +43,7 @@ class HistoricalMeteoLoader:
             "timezone": "UTC"
         }
 
-        response = requests.get(self.api_url, params=params)
+        response = requests.get(self.api_url, params=params, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         data = response.json()
 
@@ -73,11 +78,15 @@ class HistoricalMeteoLoader:
                 dfs.append(df)
                 weights.append(weight)
                 logger.info(f"  ✓ {name} ({lat}, {lon}) — weight {weight}")
-            except Exception as e:
+            except (requests.exceptions.RequestException, ValueError) as e:
                 logger.warning(f"  ✗ {name} failed: {e}. Skipping station.")
+            except Exception as e:
+                raise DataIngestionError(
+                    f"Weather station {name} failed: {e!s}"
+                ) from e
 
         if not dfs:
-            raise RuntimeError("No weather stations returned data.")
+            raise DataIngestionError("No weather stations returned data.")
 
         # Normalize weights in case some stations failed
         total_weight = sum(weights)
@@ -101,13 +110,10 @@ class HistoricalMeteoLoader:
         return result  # type: ignore
 
 if __name__ == "__main__":
-    import os
     logging.basicConfig(level=logging.INFO)
     loader = HistoricalMeteoLoader()
     df_meteo = loader.fetch_data()
 
-    # Save to data directory
-    os.makedirs("data", exist_ok=True)
-    out_path = "data/epex_2022_weather.parquet"
+    out_path = ensure_data_dir() / "epex_2022_weather.parquet"
     df_meteo.to_parquet(out_path)
     logger.info(f"Immutable Weather Corpus saved to {out_path}")

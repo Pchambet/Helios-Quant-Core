@@ -1,7 +1,7 @@
 import cvxpy as cp
 import numpy as np
 import logging
-from typing import Tuple
+from typing import List, Tuple
 
 from helios_core.assets.battery import BatteryAsset
 from helios_core.optimization.scaling import PriceScaler
@@ -21,6 +21,35 @@ class BatteryMPC:
         # FVA/MVA: hourly funding rate for margin posted to ECC
         # Default ~50 bps annualized = 0.005 / (365*24) ≈ 5.7e-7, scaled up for significance
         self.margin_funding_rate = margin_funding_rate
+
+    def _build_physical_constraints(
+        self, p_ch: cp.Variable, p_dis: cp.Variable, soc: cp.Variable, T: int
+    ) -> List[cp.Constraint]:
+        """
+        Single Source of Truth for the battery's physical constraints.
+        Used by both solve_deterministic and solve_robust to prevent divergence.
+        """
+        constraints: List[cp.Constraint] = []
+        interlock_limit = max(
+            self.battery.max_charge_mw, self.battery.max_discharge_mw
+        )
+        leakage_factor = 1.0 - self.battery.leakage_rate
+        ch_eff = self.battery.efficiency_charge
+        dis_eff = self.battery.efficiency_discharge
+
+        constraints.append(soc[0] == self.battery.soc_mwh)
+
+        for t in range(T):
+            constraints.append(p_ch[t] <= self.battery.max_charge_mw)
+            constraints.append(p_dis[t] <= self.battery.max_discharge_mw)
+            constraints.append(p_ch[t] + p_dis[t] <= interlock_limit)
+            constraints.append(
+                soc[t + 1]
+                == soc[t] * leakage_factor + p_ch[t] * ch_eff - p_dis[t] / dis_eff
+            )
+            constraints.append(soc[t + 1] <= self.battery.capacity_mwh)
+
+        return constraints
 
     def solve_deterministic(self, expected_prices: np.ndarray) -> Tuple[np.ndarray, np.ndarray, str]:
         """
@@ -73,36 +102,20 @@ class BatteryMPC:
         scaled_margin_rate = self.scaler.scale_difference(self.margin_funding_rate)
         margin_cost = scaled_margin_rate * cp.sum(cp.abs(p_dis - p_ch))  # type: ignore
 
-        objective = cp.Maximize(profit - wear_linear - wear_convex - grid_cost - slippage - margin_cost)
+        # Salvage Value (valeur de continuation) — corrige l'effet de fin d'horizon MPC
+        # 1 MWh stocké vaut Prix_Moyen × η_dis (il faut décharger pour vendre, donc perte η)
+        salvage_price = float(np.mean(expected_prices))
+        scaled_salvage = self.scaler.scale_difference(
+            salvage_price * self.battery.efficiency_discharge
+        )
+        salvage_value = soc[T] * scaled_salvage
 
-        # 4. Physical Constraints (Linearized Digital Twin)
-        constraints = []
+        objective = cp.Maximize(
+            profit - wear_linear - wear_convex - grid_cost - slippage - margin_cost + salvage_value
+        )
 
-        # Initial State
-        constraints.append(soc[0] == self.battery.soc_mwh)
-
-        # Precompute physical constants outside loop
-        interlock_limit = max(self.battery.max_charge_mw, self.battery.max_discharge_mw)
-        leakage_factor = 1.0 - self.battery.leakage_rate
-        ch_eff = self.battery.efficiency_charge
-        dis_eff = self.battery.efficiency_discharge
-
-        for t in range(T):
-            # Power Limits
-            constraints.append(p_ch[t] <= self.battery.max_charge_mw)
-            constraints.append(p_dis[t] <= self.battery.max_discharge_mw)
-
-            # Physical Interlock: a single inverter cannot charge AND discharge simultaneously.
-            # This linear constraint is DCP-compliant and preserves Kantorovich duality.
-            constraints.append(p_ch[t] + p_dis[t] <= interlock_limit)
-
-            # SOC Dynamics (efficiency & leakage)
-            constraints.append(
-                soc[t+1] == soc[t] * leakage_factor + p_ch[t] * ch_eff - p_dis[t] / dis_eff
-            )
-
-            # Energy Limits
-            constraints.append(soc[t+1] <= self.battery.capacity_mwh)
+        # 4. Physical Constraints (SSOT — Single Source of Truth)
+        constraints = self._build_physical_constraints(p_ch, p_dis, soc, T)
 
         # 5. Solving Form
         prob = cp.Problem(objective, constraints)
@@ -191,6 +204,13 @@ class BatteryMPC:
         # from the mean, capturing liquidity co-movement with extreme prices.
         mean_scenario = np.mean(scaled_scenarios, axis=0)
 
+        # Salvage Value (valeur de continuation) — même logique que solve_deterministic
+        salvage_price = float(np.mean(historical_scenarios))
+        scaled_salvage = self.scaler.scale_difference(
+            salvage_price * self.battery.efficiency_discharge
+        )
+        salvage_value = soc[T] * scaled_salvage
+
         for i in range(N):
             # Per-scenario price deviation amplifies the slippage (capped at 2x)
             price_dev = np.sum(np.abs(scaled_scenarios[i] - mean_scenario))
@@ -200,6 +220,7 @@ class BatteryMPC:
             empirical_loss = (
                 (p_ch @ scaled_scenarios[i] - p_dis @ scaled_scenarios[i])
                 + wear_linear + wear_convex + grid_cost + scenario_slippage + margin_cost
+                - salvage_value
             )
             constraints.append(s[i] >= empirical_loss)
 
@@ -213,24 +234,8 @@ class BatteryMPC:
             constraints.append(lam >= p_ch[t] - p_dis[t])
             constraints.append(lam >= -(p_ch[t] - p_dis[t]))
 
-        # 5. Physical Constraints (Identical to Deterministic)
-        constraints.append(soc[0] == self.battery.soc_mwh)
-        interlock_limit = max(self.battery.max_charge_mw, self.battery.max_discharge_mw)
-        leakage_factor = 1.0 - self.battery.leakage_rate
-        ch_eff = self.battery.efficiency_charge
-        dis_eff = self.battery.efficiency_discharge
-
-        for t in range(T):
-            constraints.append(p_ch[t] <= self.battery.max_charge_mw)
-            constraints.append(p_dis[t] <= self.battery.max_discharge_mw)
-
-            # Physical Interlock: prevent simultaneous charge + discharge
-            constraints.append(p_ch[t] + p_dis[t] <= interlock_limit)
-
-            constraints.append(
-                soc[t+1] == soc[t] * leakage_factor + p_ch[t] * ch_eff - p_dis[t] / dis_eff
-            )
-            constraints.append(soc[t+1] <= self.battery.capacity_mwh)
+        # 5. Physical Constraints (SSOT — Single Source of Truth)
+        constraints.extend(self._build_physical_constraints(p_ch, p_dis, soc, T))
 
         # 6. Solving form
         prob = cp.Problem(objective, constraints)

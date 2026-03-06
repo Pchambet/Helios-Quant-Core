@@ -96,6 +96,12 @@ pip install -e "."
 
 # Run the peacetime benchmark
 python run_normal_benchmark.py
+# ou: python run_benchmark.py --mode normal
+
+# Benchmark crise août 2022 (défaut)
+python run_benchmark.py
+# Dates custom
+python run_benchmark.py --mode custom --start 2023-01-01 --end 2023-01-31
 ```
 
 ### Deep Dives

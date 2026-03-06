@@ -1,77 +1,67 @@
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
+from typing import Optional
+
 
 class DynamicEpsilonManager:
     """
     Risk Manager for the Robust DRO Agent.
 
-    Post-Audit V2: Epsilon is now calibrated on the INTRA-CLUSTER variance
-    of the KNN-selected scenarios, not on global market volatility.
-    This fixes the measure-space incoherence (Audit Faille 2.2):
-    epsilon must live in the same space as the filtered empirical distribution.
+    Risque (variance) ≠ Incertitude (ε). La variance est DÉJÀ dans les scénarios.
+    ε = rayon d'ambiguïté (confiance dans la distribution empirique).
+
+    Post-Refonte: ε_base ancré théoriquement O(1/√N), indépendant de la volatilité.
+    L'entropie régime (HMM hésite) gonfle ε pour robustesse en phase de transition.
     """
     def __init__(
         self,
         eps_min: float = 0.05,
         eps_max: float = 0.50,
-        vol_min_expected: float = 10.0,
-        vol_max_expected: float = 80.0
+        eps_nominal: float = 0.15,
+        eps_n_ref: int = 30,
+        entropy_beta: float = 0.5,
+        model_gamma: float = 0.5,
     ):
-        # Post-Audit V4: Bounds recalibrated for INTRA-CLUSTER dispersion.
-        # KNN-filtered scenarios have typical std ~10-150 EUR/MWh per hour,
-        # vs 50-300 for global market volatility. The old bounds were way too high,
-        # making epsilon always stick at eps_min (hyper-conservative).
         self.eps_min = eps_min
         self.eps_max = eps_max
-        self.vol_min = vol_min_expected
-        self.vol_max = vol_max_expected
+        self.eps_nominal = eps_nominal
+        self.eps_n_ref = eps_n_ref
+        self.entropy_beta = entropy_beta
+        self.model_gamma = model_gamma
 
-    def compute_epsilon_from_scenarios(self, scenarios: np.ndarray) -> float:
+    def compute_epsilon_from_scenarios(
+        self,
+        scenarios: np.ndarray,
+        regime_uncertainty: Optional[float] = None,
+        model_error: Optional[float] = None,
+    ) -> float:
         """
-        Calibrates epsilon from the intra-cluster dispersion of the KNN-selected
-        scenario matrix. This ensures the ambiguity radius is coherent with the
-        filtered empirical distribution.
+        ε_base = eps_nominal * √(n_ref/N) — décroissance théorique O(1/√N).
+        La volatilité des prix n'intervient plus : elle est déjà dans les scénarios.
 
-        Args:
-            scenarios: (N, T) matrix of price scenarios output by the KNN generator.
-
-        Returns:
-            Epsilon value scaled to the intra-cluster volatility.
+        regime_uncertainty: Entropie [0,1]. Si fournie : eps *= (1 + beta * H).
+        model_error: CVE (RMSE/mean|y|). Si fournie : eps *= (1 + gamma * CVE).
+        Double Bouclier: monde (régime) × capteur (modèle).
         """
-        if scenarios.shape[0] < 2:
+        N = scenarios.shape[0]
+        if N < 2:
             return (self.eps_min + self.eps_max) / 2.0
 
-        # Intra-cluster volatility: mean of per-hour std across scenarios
-        intra_vol = float(np.mean(np.std(scenarios, axis=0)))
+        eps_base = self.eps_nominal * np.sqrt(self.eps_n_ref / N)
 
-        # Linear mapping with clipping (same logic, coherent input)
-        if intra_vol <= self.vol_min:
-            return self.eps_min
-        elif intra_vol >= self.vol_max:
-            return self.eps_max
-        else:
-            ratio = (intra_vol - self.vol_min) / (self.vol_max - self.vol_min)
-            eps = self.eps_min + ratio * (self.eps_max - self.eps_min)
-            return float(eps)
+        if regime_uncertainty is not None and self.entropy_beta > 0:
+            eps_base *= 1.0 + self.entropy_beta * float(np.clip(regime_uncertainty, 0.0, 1.0))
+
+        if model_error is not None and self.model_gamma > 0:
+            eps_base *= 1.0 + self.model_gamma * float(np.clip(model_error, 0.0, 2.0))
+
+        return float(np.clip(eps_base, self.eps_min, self.eps_max))
 
     def compute_epsilon(self, historical_prices: pd.Series) -> float:
         """
-        Legacy method: Maps global price volatility to epsilon.
-        Kept for backward compatibility but should be replaced by
-        compute_epsilon_from_scenarios() in production flows.
+        Legacy: retourne eps_nominal (appel sans scénarios).
+        Remplacé par compute_epsilon_from_scenarios() en production.
         """
-        lookback = 168
-        if len(historical_prices) < lookback:
-            return (self.eps_min + self.eps_max) / 2.0
-
-        window = historical_prices.iloc[-lookback:]
-        current_vol = float(window.std())
-
-        if current_vol <= self.vol_min:
-            return self.eps_min
-        elif current_vol >= self.vol_max:
-            return self.eps_max
-        else:
-            ratio = (current_vol - self.vol_min) / (self.vol_max - self.vol_min)
-            eps = self.eps_min + ratio * (self.eps_max - self.eps_min)
-            return float(eps)
+        return float(np.clip(self.eps_nominal, self.eps_min, self.eps_max))

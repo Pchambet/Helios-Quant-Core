@@ -5,13 +5,9 @@ from helios_core.stochastic.regime_detector import RegimeDetector
 
 def test_regime_detector_basic() -> None:
     """Verifies that the HMM detects at least 2 distinct regimes on synthetic crisis data."""
-    np.random.seed(42)
-
-    # Create 30 days of data with 2 clear regimes:
-    # Days 0-14: Normal (prices ~50 EUR, low vol)
-    # Days 15-29: Crisis (prices ~500 EUR, high vol)
-    normal_prices = np.random.normal(50, 10, 15 * 24)
-    crisis_prices = np.random.normal(500, 100, 15 * 24)
+    rng = np.random.default_rng(42)
+    normal_prices = rng.normal(50, 10, 15 * 24)
+    crisis_prices = rng.normal(500, 100, 15 * 24)
     all_prices = np.concatenate([normal_prices, crisis_prices])
 
     prices_series = pd.Series(all_prices)
@@ -34,10 +30,9 @@ def test_regime_detector_basic() -> None:
 
 def test_regime_mask_filters_windows() -> None:
     """Verifies that the regime mask correctly filters historical windows."""
-    np.random.seed(42)
-
-    normal = np.random.normal(50, 5, 10 * 24)
-    crisis = np.random.normal(300, 50, 10 * 24)
+    rng = np.random.default_rng(42)
+    normal = rng.normal(50, 5, 10 * 24)
+    crisis = rng.normal(300, 50, 10 * 24)
     prices = pd.Series(np.concatenate([normal, crisis]))
 
     detector = RegimeDetector(n_regimes=2, lookback_days=7)
@@ -51,3 +46,15 @@ def test_regime_mask_filters_windows() -> None:
     # Not all windows should be in the same regime
     assert not np.all(mask) or not np.all(~mask), \
         "Mask should have both True and False for bimodal data"
+
+
+def test_regime_uncertainty_bounds() -> None:
+    """get_regime_uncertainty returns a value in [0, 1] (entropie normalisée)."""
+    rng = np.random.default_rng(42)
+    prices = pd.Series(rng.normal(80, 30, 14 * 24))
+
+    detector = RegimeDetector(n_regimes=3, lookback_days=7)
+    detector.fit(prices)
+
+    unc = detector.get_regime_uncertainty(prices)
+    assert 0.0 <= unc <= 1.0, f"Uncertainty should be in [0,1], got {unc}"

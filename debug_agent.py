@@ -1,12 +1,14 @@
 import pandas as pd
+
 from helios_core.optimization.controller import BatteryMPC
+from helios_core.utils.paths import DATA_DIR
 from helios_core.assets.battery import BatteryAsset
 from helios_core.assets.config import BatteryConfig
 from helios_core.optimization.scaling import PriceScaler
 
 def main() -> None:
     # 1. Load Data
-    df = pd.read_parquet("data/epex_2022_crisis.parquet")
+    df = pd.read_parquet(DATA_DIR / "epex_2022_crisis.parquet")
 
     # 2. Extract a single day (Aug 15 2022 - a highly volatile day)
     day_df = df.loc["2022-08-15 00:00:00+00:00":"2022-08-15 23:00:00+00:00"].copy() # type: ignore

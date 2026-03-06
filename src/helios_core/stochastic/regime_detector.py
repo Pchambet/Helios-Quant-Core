@@ -103,6 +103,41 @@ class RegimeDetector:
         # Return the most recent day's regime
         return int(states[-1])
 
+    def get_regime_uncertainty(self, prices: pd.Series) -> float:
+        """
+        Returns the epistemic uncertainty on the current regime (entropie des états).
+        Proche de 0 = régime identifié avec certitude. Proche de 1 = incertitude totale.
+
+        Utilisé par DynamicEpsilonManager pour calibrer ε : quand le HMM hésite
+        entre plusieurs régimes, ε augmente (robustesse distributionnelle).
+        """
+        if not self._is_fitted or self.model is None:
+            return 0.0
+
+        price_array = prices.to_numpy(dtype=float)
+        n_hours = min(len(price_array), self.lookback_days * 24)
+        recent = price_array[-n_hours:]
+
+        n_days = n_hours // 24
+        if n_days < 1:
+            return 0.0
+
+        features = np.zeros((n_days, 3))
+        for d in range(n_days):
+            day_prices = recent[d * 24: (d + 1) * 24]
+            features[d, 0] = np.mean(day_prices)
+            features[d, 1] = np.std(day_prices)
+            features[d, 2] = np.max(day_prices)
+
+        posteriors = self.model.predict_proba(features)
+        # Dernier jour : probas d'appartenance aux états
+        probs = np.asarray(posteriors[-1], dtype=float)
+        probs = np.clip(probs, 1e-10, 1.0)
+
+        entropy = -float(np.sum(probs * np.log(probs)))
+        max_entropy = np.log(self.n_regimes)
+        return float(entropy / max_entropy)
+
     def get_regime_mask(self, prices: pd.Series) -> np.ndarray:
         """
         Returns a boolean mask over all 24h windows, True if the window belongs

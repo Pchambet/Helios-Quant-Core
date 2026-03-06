@@ -1,8 +1,8 @@
-import os
 import logging
 import matplotlib.pyplot as plt
 
 from helios_core.data.entsoe_loader import HistoricalCrisisLoader
+from helios_core.utils.paths import REPORTS_DIR, ensure_reports_dir
 from helios_core.assets.config import BatteryConfig
 from helios_core.assets.battery import BatteryAsset
 from helios_core.optimization.scaling import PriceScaler
@@ -49,9 +49,11 @@ def main() -> None:
     for eps in epsilons:
         scaler = PriceScaler()
         mpc = BatteryMPC(BatteryAsset(config), scaler)
-        agent = RobustDROAgent(mpc, epsilon=eps)
+        agent = RobustDROAgent(mpc, epsilon=eps, seed=42)
 
-        tester = WalkForwardBacktester(df, agent, metrics)
+        tester = WalkForwardBacktester(
+            df, agent, metrics, physical_asset=mpc.battery, seed=42
+        )
         report = tester.run()
 
         net_pnl = report["Net Adjusted PnL (EUR)"]
@@ -71,7 +73,7 @@ def main() -> None:
     plot_efficient_frontier(results)
 
 def plot_efficient_frontier(results: list[dict[str, float]]) -> None:
-    os.makedirs("reports", exist_ok=True)
+    ensure_reports_dir()
 
     epsilons = [r["Epsilon"] for r in results]
     pnls = [r["Net PnL"] for r in results]
@@ -99,7 +101,7 @@ def plot_efficient_frontier(results: list[dict[str, float]]) -> None:
     plt.title('DRO Efficient Frontier: Asset Return vs Ambiguity Risk', fontsize=14, pad=15)
 
     fig.tight_layout()
-    out_path = "reports/epsilon_calibration.png"
+    out_path = REPORTS_DIR / "epsilon_calibration.png"
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     print(f"\n[EXPORT] Calibration Tear Sheet saved to {out_path}")
 
