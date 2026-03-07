@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 MIN_TRAIN_HOURS = 168  # 7 jours
 PHYSICAL_COLS = ["Load_Forecast", "Wind_Forecast", "Solar_Forecast", "Nuclear_Generation"]
+# Helios 2.0 : météo brute Open-Meteo (vent, soleil, température) — causalité physique
+METEO_COLS = ["Temperature_C", "WindSpeed_kmh", "SolarIrradiance_WM2"]
 
 
 def _build_train_features(df: pd.DataFrame, idx: int) -> dict[str, float]:
@@ -34,6 +36,13 @@ def _build_train_features(df: pd.DataFrame, idx: int) -> dict[str, float]:
     for col in PHYSICAL_COLS:
         key = col.lower() + "_lag_24"
         feat[key] = float(df[col].iloc[idx - 24]) if col in df.columns and idx >= 24 else 0.0
+    for col in METEO_COLS:
+        key = col.lower() + "_lag_24"
+        if col in df.columns and idx >= 24:
+            val = df[col].iloc[idx - 24]
+            feat[key] = float(val) if pd.notna(val) else 0.0
+        else:
+            feat[key] = 0.0
     return feat
 
 
@@ -67,6 +76,14 @@ def _build_pred_features(
             feat[key] = float(past_data[col].iloc[lag_idx])
         else:
             feat[key] = float(past_data[col].iloc[-1]) if col in past_data.columns else 0.0
+    for col in METEO_COLS:
+        key = col.lower() + "_lag_24"
+        lag_idx = n - 24 + h if h < 24 else n - 24
+        if col in past_data.columns and 0 <= lag_idx < n:
+            val = past_data[col].iloc[lag_idx]
+            feat[key] = float(val) if pd.notna(val) else 0.0
+        else:
+            feat[key] = float(past_data[col].iloc[-1]) if col in past_data.columns and pd.notna(past_data[col].iloc[-1]) else 0.0
     return feat
 
 

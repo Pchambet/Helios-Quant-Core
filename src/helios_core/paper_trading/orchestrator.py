@@ -59,6 +59,10 @@ def _build_mock_dataset(target_date: date, lookback_days: int) -> pd.DataFrame:
     base = 80 + 20 * np.sin(2 * np.pi * np.arange(hours) / 168)
     prices = np.clip(base + rng.normal(0, 15, hours), -50, 500)
 
+    # Météo synthétique (Helios 2.0 : Temperature, Wind, Solar pour LightGBM)
+    temp = 15 + 10 * np.sin(2 * np.pi * np.arange(hours) / 24) + rng.normal(0, 2, hours)
+    wind = np.maximum(0, 10 + 5 * np.sin(2 * np.pi * np.arange(hours) % 24 / 24) + rng.normal(0, 3, hours))
+    solar = np.maximum(0, 500 * np.sin(np.pi * (np.arange(hours) % 24 - 6) / 12) + rng.normal(0, 50, hours))
     df = pd.DataFrame(
         {
             "Price_EUR_MWh": prices,
@@ -66,6 +70,9 @@ def _build_mock_dataset(target_date: date, lookback_days: int) -> pd.DataFrame:
             "Wind_Forecast": 8000 + 3000 * np.sin(2 * np.pi * np.arange(hours) % 24 / 24),
             "Solar_Forecast": np.maximum(0, 4000 * np.sin(np.pi * (np.arange(hours) % 24 - 6) / 12)),
             "Nuclear_Generation": 40000 + rng.normal(0, 1000, hours),
+            "Temperature_C": temp,
+            "WindSpeed_kmh": wind,
+            "SolarIrradiance_WM2": solar,
         },
         index=idx,
     )
