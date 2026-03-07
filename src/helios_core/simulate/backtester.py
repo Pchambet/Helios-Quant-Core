@@ -87,7 +87,6 @@ class WalkForwardBacktester:
         fee_buy = self.physical_asset.grid_fee_buy_eur_per_mwh
         fee_sell = self.physical_asset.grid_fee_sell_eur_per_mwh
         marginal_cost = self.physical_asset.marginal_cost_eur_per_mwh
-        eta_dis = self.physical_asset.efficiency_discharge
 
         # ENTSO-E physical forecast error standard deviations (calibrated MW)
         PHYSICAL_NOISE_STD = {
@@ -158,7 +157,8 @@ class WalkForwardBacktester:
                     cost = p_ch_now * (current_price + fee_buy)
                     gross_cost += cost
                 if p_dis_now > 0:
-                    rev = p_dis_now * (current_price - fee_sell) * eta_dis
+                    # p_dis_now = MW livrés au réseau (BatteryAsset.step retourne côté grid)
+                    rev = p_dis_now * (current_price - fee_sell)
                     gross_revenue += rev
 
                 wear_cost_t = (p_ch_now + p_dis_now) * marginal_cost

@@ -15,7 +15,12 @@ import numpy as np
 import pandas as pd
 
 from helios_core.exceptions import DataIngestionError
-from helios_core.paper_trading.config import PNL_LOG_PATH, TRADES_LOG_PATH, ensure_paper_data_dir
+from helios_core.paper_trading.config import (
+    PNL_LOG_PATH,
+    TRADES_LOG_PATH,
+    append_csv_with_lock,
+    ensure_paper_data_dir,
+)
 from helios_core.paper_trading.live_data import LiveDataFetcher
 
 logger = logging.getLogger(__name__)
@@ -168,7 +173,13 @@ class PaperTraderReconciler:
             df_day = df_day.resample("1h").mean().ffill().bfill()
 
         prices = df_day["Price_EUR_MWh"].iloc[:24].tolist()
-        prices = [float(p) if pd.notna(p) else 0.0 for p in prices]
+        nan_count = sum(1 for p in prices if pd.isna(p))
+        if nan_count > 0:
+            raise DataIngestionError(
+                f"Prix EPEX : {nan_count} heures avec NaN pour {target_date}. "
+                "Refuser de remplacer par 0 (Fail-Fast)."
+            )
+        prices = [float(p) for p in prices]
 
         while len(prices) < 24:
             prices.append(prices[-1] if prices else 0.0)
@@ -196,10 +207,5 @@ class PaperTraderReconciler:
 
         df_row = pd.DataFrame([row])
         write_header = not PNL_LOG_PATH.exists()
-        df_row.to_csv(
-            PNL_LOG_PATH,
-            mode="a",
-            header=write_header,
-            index=False,
-        )
+        append_csv_with_lock(PNL_LOG_PATH, df_row, write_header)
         logger.info(f"PnL enregistré dans {PNL_LOG_PATH}")

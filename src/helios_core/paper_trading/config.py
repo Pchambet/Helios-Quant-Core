@@ -5,6 +5,8 @@ Gate Closure EPEX SPOT Day-Ahead : 12h00 CET (Paris).
 
 from pathlib import Path
 
+import pandas as pd
+
 # Ancrage : helios_core/paper_trading/config.py → projet racine
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -31,3 +33,23 @@ def ensure_paper_data_dir() -> Path:
     """Crée data/paper/ si absent."""
     PAPER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     return PAPER_DATA_DIR
+
+
+def append_csv_with_lock(path: Path, df_row: pd.DataFrame, write_header: bool) -> None:
+    """
+    Append une ligne au CSV avec verrou fichier (évite race condition).
+    Fallback sans lock sur Windows (fcntl absent).
+    """
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None  # type: ignore
+
+    with open(path, "a") as f:
+        if fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            df_row.to_csv(f, header=write_header, index=False)
+        finally:
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)

@@ -174,18 +174,22 @@ RECONCILER_MINUTE_UTC = 0
 
 **Reality Check :** La Gate Closure de l'enchère Day-Ahead EPEX SPOT est à **12h00 CET** (Paris). Tout ordre soumis après cette heure est rejeté. L'orchestrateur doit tourner **avant** la fermeture.
 
-```cron
-# Paper Trading — Génération des ordres J+1 (10h30 Paris = 1h30 avant Gate Closure)
-# Hiver (CET = UTC+1) : 09h30 UTC | Été (CEST = UTC+2) : 08h30 UTC
-# Utiliser 09h30 UTC pour couvrir les deux (marge conservatrice)
-30 9 * * * cd /Users/pierre/Desktop/GitHub/Helios-Quant-Core && uv run python run_paper_trader.py
+**Recommandé :** Utiliser `TZ=Europe/Paris` pour éviter le décalage CET/CEST. Voir `scripts/crontab.example` :
 
-# Réconciliateur — PnL réel (14h00 Paris, prix publiés sur ENTSO-E)
-# Hiver : 13h00 UTC | Été : 12h00 UTC
-0 13 * * * cd /Users/pierre/Desktop/GitHub/Helios-Quant-Core && uv run python run_reconciler.py
+```cron
+# scripts/crontab.example — Copier dans crontab -e
+PROJECT_ROOT=/chemin/vers/Helios-Quant-Core
+30 10 * * * cd $PROJECT_ROOT && TZ=Europe/Paris uv run python run_paper_trader.py
+0 14 * * * cd $PROJECT_ROOT && TZ=Europe/Paris uv run python run_reconciler.py
 ```
 
-**Note :** 09h30 UTC = 10h30 Paris (hiver) ou 11h30 Paris (été). Marge de 30min à 1h30 avant la Gate Closure. Le réconciliateur à 13h00 UTC garantit que les prix day-ahead sont publiés sur ENTSO-E.
+**Alternative UTC figé** (déconseillé en été) :
+```cron
+30 9 * * * cd /chemin/vers/projet && uv run python run_paper_trader.py   # 10h30 Paris hiver, 11h30 été
+0 13 * * * cd /chemin/vers/projet && uv run python run_reconciler.py    # 14h Paris hiver, 15h été
+```
+
+**Note :** Avec TZ=Europe/Paris, 10h30 et 14h00 restent corrects toute l'année (CET/CEST géré automatiquement).
 
 ---
 

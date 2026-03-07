@@ -18,7 +18,11 @@ from helios_core.assets.battery import BatteryAsset
 from helios_core.assets.config import BatteryConfig
 from helios_core.optimization.controller import BatteryMPC
 from helios_core.optimization.scaling import PriceScaler
-from helios_core.paper_trading.config import TRADES_LOG_PATH, ensure_paper_data_dir
+from helios_core.paper_trading.config import (
+    TRADES_LOG_PATH,
+    append_csv_with_lock,
+    ensure_paper_data_dir,
+)
 from helios_core.paper_trading.live_data import LiveDataFetcher
 
 logger = logging.getLogger(__name__)
@@ -222,10 +226,5 @@ class PaperTraderOrchestrator:
 
         df_row = pd.DataFrame([row])
         write_header = not TRADES_LOG_PATH.exists()
-        df_row.to_csv(
-            TRADES_LOG_PATH,
-            mode="a",
-            header=write_header,
-            index=False,
-        )
+        append_csv_with_lock(TRADES_LOG_PATH, df_row, write_header)
         logger.info(f"Ordre enregistré dans {TRADES_LOG_PATH}")

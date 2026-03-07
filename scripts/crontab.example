@@ -1,0 +1,13 @@
+# Helios Paper Trading — Cron avec TZ=Europe/Paris
+# Évite le décalage CET/CEST : 10h30 Paris reste 10h30 toute l'année.
+#
+# Installation : crontab -e puis copier les lignes ci-dessous.
+# Adapter PROJECT_ROOT au chemin de ton dépôt.
+
+PROJECT_ROOT=/Users/pierre/Desktop/GitHub/Helios-Quant-Core
+
+# Orchestrateur — 10h30 Paris (ordres J+1, avant Gate Closure 12h00)
+30 10 * * * cd $PROJECT_ROOT && TZ=Europe/Paris uv run python run_paper_trader.py
+
+# Réconciliateur — 14h00 Paris (PnL du jour, prix day-ahead publiés ~12h30)
+0 14 * * * cd $PROJECT_ROOT && TZ=Europe/Paris uv run python run_reconciler.py

@@ -2,7 +2,7 @@
 CLI pour le Réconciliateur Paper Trading (Back-Office).
 
 Usage:
-  uv run python run_reconciler.py                  # Réconcilie demain (14h Paris)
+  uv run python run_reconciler.py                  # Réconcilie demain (14h Paris, prix D+1 publiés ~13h)
   uv run python run_reconciler.py --dry-run       # Calcule sans écrire
   uv run python run_reconciler.py --target-date 2025-04-01  # Date cible explicite
 """
@@ -31,7 +31,7 @@ def _parse_args() -> argparse.Namespace:
         "--target-date",
         type=str,
         default=None,
-        help="Date à réconcilier (YYYY-MM-DD). Défaut: demain (D+1).",
+        help="Date à réconcilier (YYYY-MM-DD). Défaut: demain (prix D+1 publiés ~13h).",
     )
     parser.add_argument(
         "--dry-run",
@@ -52,7 +52,7 @@ def main() -> int:
     if args.target_date:
         target = date.fromisoformat(args.target_date)
     else:
-        target = date.today() + timedelta(days=1)
+        target = date.today() + timedelta(days=1)  # D+1 : enchère 12h = livraison demain, prix publiés ~13h
 
     reconciler = PaperTraderReconciler()
     result = reconciler.run(

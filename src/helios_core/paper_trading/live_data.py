@@ -145,9 +145,15 @@ class LiveDataFetcher:
     def fetch_meteo_forecast(self, hours: int = 48) -> pd.DataFrame:
         """
         Météo D+1/D+2 depuis Open-Meteo Forecast.
-        Lève DataIngestionError si API down ; l'orchestrateur utilisera persistance.
+        Persiste le résultat pour fallback si API down au prochain run.
         """
-        return self.meteo_loader.fetch_forecast(hours=hours)
+        df = self.meteo_loader.fetch_forecast(hours=hours)
+        path = PAPER_DATA_DIR / "last_meteo_forecast.parquet"
+        try:
+            df[["Temperature_C", "WindSpeed_kmh", "SolarIrradiance_WM2"]].to_parquet(path)
+        except OSError as e:
+            logger.warning(f"Could not persist meteo fallback: {e}")
+        return df
 
     def fetch_day_ahead_prices(self, target_date: str) -> pd.DataFrame:
         """
@@ -182,6 +188,14 @@ class LiveDataFetcher:
         try:
             df_meteo = self.fetch_meteo_forecast(hours=meteo_hours)
         except DataIngestionError:
+            # Essayer fallback persistance (dernier run réussi)
+            if meteo_fallback_from is None:
+                fallback_path = PAPER_DATA_DIR / "last_meteo_forecast.parquet"
+                if fallback_path.exists():
+                    try:
+                        meteo_fallback_from = pd.read_parquet(fallback_path)
+                    except Exception as e:
+                        logger.warning(f"Could not load meteo fallback: {e}")
             if meteo_fallback_from is not None and "Temperature_C" in meteo_fallback_from.columns:
                 logger.warning("Using meteo persistence fallback (last 48h of past data).")
                 last_n = min(meteo_hours, len(meteo_fallback_from))
@@ -264,6 +278,12 @@ class LiveDataFetcher:
         ts = client.query_day_ahead_prices(self.country_code, start=start, end=end)
         df = ts.to_frame(name="Price_EUR_MWh")
         df.index = pd.DatetimeIndex(df.index).tz_convert("UTC")
+        nan_count = df["Price_EUR_MWh"].isna().sum()
+        if nan_count > 6:
+            raise DataIngestionError(
+                f"ENTSO-E returned {int(nan_count)} NaN hours in prices. "
+                "Refusing to ffill silently."
+            )
         return df.ffill().bfill()  # type: ignore
 
     def _fetch_entsoe_fundamentals(
