@@ -28,6 +28,12 @@ class BatteryAsset:
         self.cycle_life = config.cycle_life
         self.grid_tariff_eur_mwh = config.grid_tariff_eur_mwh
 
+        # Frictions (Phase 1 — Brouillard de la Guerre)
+        self._marginal_cost_eur_per_mwh = config.marginal_cost_eur_per_mwh
+        self._grid_fee_buy_eur_per_mwh = config.grid_fee_buy_eur_per_mwh
+        self._grid_fee_sell_eur_per_mwh = config.grid_fee_sell_eur_per_mwh
+        self._stress_penalty_lambda = config.stress_penalty_lambda
+
         if config.initial_soc_mwh > config.capacity_mwh:
             raise PhysicalConstraintError(f"Initial SoC {config.initial_soc_mwh} exceeds capacity {config.capacity_mwh}.")
         self.soc_mwh = config.initial_soc_mwh
@@ -51,6 +57,26 @@ class BatteryAsset:
     def lcos_kappa_1(self) -> float:
         """Superlinear DoD-dependent wear cost coefficient (EUR/MW^1.5). ~15% of total LCOS."""
         return self.marginal_wear_cost_per_mwh * 0.15
+
+    @property
+    def marginal_cost_eur_per_mwh(self) -> float:
+        """Chemical wear-and-tear cost per MWh throughput (DoD proxy)."""
+        return self._marginal_cost_eur_per_mwh
+
+    @property
+    def grid_fee_buy_eur_per_mwh(self) -> float:
+        """Taxes and spread when buying from the grid."""
+        return self._grid_fee_buy_eur_per_mwh
+
+    @property
+    def grid_fee_sell_eur_per_mwh(self) -> float:
+        """Taxes and spread when selling to the grid."""
+        return self._grid_fee_sell_eur_per_mwh
+
+    @property
+    def stress_penalty_lambda(self) -> float:
+        """Weight for quadratic penalty on power (smooths deep discharges)."""
+        return self._stress_penalty_lambda
 
     def step(
         self, power_mw: float, duration_hours: float

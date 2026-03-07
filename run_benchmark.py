@@ -28,6 +28,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--end", help="YYYY-MM-DD (requis si --mode custom)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--mock", action="store_true", help="Données synthétiques si pas d'API/cache")
+    p.add_argument(
+        "--frictions",
+        action="store_true",
+        help="Active les frictions réalistes (LCOS 15 €/MWh, frais 2 €/MWh) — Brouillard de la Guerre",
+    )
     return p.parse_args()
 
 
@@ -40,6 +45,7 @@ def main() -> None:
         end_date=args.end,
         seed=args.seed,
         mock=args.mock,
+        use_frictions=args.frictions,
     )
     runner.run()
 

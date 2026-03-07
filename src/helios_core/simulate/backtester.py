@@ -83,6 +83,12 @@ class WalkForwardBacktester:
         gross_cost = 0.0
         throughput = 0.0
 
+        # Phase 1 frictions (Brouillard de la Guerre) — coûts réels, pas la stress_penalty
+        fee_buy = self.physical_asset.grid_fee_buy_eur_per_mwh
+        fee_sell = self.physical_asset.grid_fee_sell_eur_per_mwh
+        marginal_cost = self.physical_asset.marginal_cost_eur_per_mwh
+        eta_dis = self.physical_asset.efficiency_discharge
+
         # ENTSO-E physical forecast error standard deviations (calibrated MW)
         PHYSICAL_NOISE_STD = {
             'Load_Forecast': 1000.0,       # ~1000 MW RMSE at 24-48h lead
@@ -146,12 +152,17 @@ class WalkForwardBacktester:
                 net_power = float(p_ch_req - p_dis_req)
                 p_ch_now, p_dis_now = self.physical_asset.step(net_power, 1.0)
 
+                # PnL sur puissances exécutées (fees asymétriques + usure linéaire)
+                # stress_penalty_lambda : régularisation mathématique uniquement, pas de flux financier
                 if p_ch_now > 0:
-                    cost = p_ch_now * current_price
+                    cost = p_ch_now * (current_price + fee_buy)
                     gross_cost += cost
                 if p_dis_now > 0:
-                    rev = p_dis_now * current_price * 0.95
+                    rev = p_dis_now * (current_price - fee_sell) * eta_dis
                     gross_revenue += rev
+
+                wear_cost_t = (p_ch_now + p_dis_now) * marginal_cost
+                gross_cost += wear_cost_t
 
                 throughput += (p_ch_now + p_dis_now)
 

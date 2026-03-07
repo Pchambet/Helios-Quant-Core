@@ -12,3 +12,17 @@ class BatteryConfig(BaseModel):
     cycle_life: int = Field(default=5000, gt=0, description="Total full equivalent cycles before end of life.")
     initial_soc_mwh: float = Field(default=0.0, ge=0, description="Initial state of charge.")
     grid_tariff_eur_mwh: float = Field(default=5.0, ge=0.0, description="Network access tariff (TURPE) in EUR per MWh of throughput.")
+
+    # Frictions (Phase 1 — Brouillard de la Guerre). Default 0.0 = backward compatible.
+    marginal_cost_eur_per_mwh: float = Field(
+        default=0.0, ge=0.0, description="Chemical wear-and-tear cost per MWh charged/discharged (DoD proxy)."
+    )
+    grid_fee_buy_eur_per_mwh: float = Field(
+        default=0.0, ge=0.0, description="Taxes and spread applied when buying from the grid."
+    )
+    grid_fee_sell_eur_per_mwh: float = Field(
+        default=0.0, ge=0.0, description="Taxes and spread applied when selling to the grid."
+    )
+    stress_penalty_lambda: float = Field(
+        default=0.0, ge=0.0, description="Weight for quadratic penalty on power (p_ch² + p_dis²) to smooth deep discharges."
+    )

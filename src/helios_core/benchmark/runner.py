@@ -89,6 +89,7 @@ class BenchmarkRunner:
         seed: int = 42,
         mock: bool = False,
         model_gamma: float = 0.5,
+        use_frictions: bool = False,
     ) -> None:
         if preset in PRESETS:
             p = PRESETS[preset]
@@ -113,11 +114,13 @@ class BenchmarkRunner:
         self.seed = seed
         self.mock = mock
         self.model_gamma = model_gamma
+        self.use_frictions = use_frictions
 
     def run(self) -> dict[str, dict[str, float]]:
         """Exécute le benchmark et retourne les résultats par agent."""
         print(f"\n{'='*60}")
-        print(f" HELIOS-QUANT-CORE : {self.title} ")
+        title_suffix = " [FRICTIONNÉ]" if self.use_frictions else ""
+        print(f" HELIOS-QUANT-CORE : {self.title}{title_suffix} ")
         print(f"{'='*60}\n")
 
         # 1. Chargement
@@ -132,15 +135,31 @@ class BenchmarkRunner:
         print(f"[DATA] Maximum Extreme Price: {df['Price_EUR_MWh'].max():.2f} EUR/MWh\n")
 
         # 2. Twin & métriques
-        config = BatteryConfig(
-            capacity_mwh=CAPACITY,
-            max_charge_mw=5.0,
-            max_discharge_mw=5.0,
-            efficiency_charge=0.95,
-            efficiency_discharge=0.95,
-            capex_eur=CAPEX,
-            cycle_life=CYCLES,
-        )
+        if self.use_frictions:
+            config = BatteryConfig(
+                capacity_mwh=CAPACITY,
+                max_charge_mw=5.0,
+                max_discharge_mw=5.0,
+                efficiency_charge=0.95,
+                efficiency_discharge=0.95,
+                capex_eur=CAPEX,
+                cycle_life=CYCLES,
+                marginal_cost_eur_per_mwh=15.0,
+                grid_fee_buy_eur_per_mwh=2.0,
+                grid_fee_sell_eur_per_mwh=2.0,
+                stress_penalty_lambda=30.0,
+            )
+            print("[Twin] Frictions activées: LCOS 15 €/MWh, Frais 2 €/MWh, λ_stress=30 (Brouillard de la Guerre)\n")
+        else:
+            config = BatteryConfig(
+                capacity_mwh=CAPACITY,
+                max_charge_mw=5.0,
+                max_discharge_mw=5.0,
+                efficiency_charge=0.95,
+                efficiency_discharge=0.95,
+                capex_eur=CAPEX,
+                cycle_life=CYCLES,
+            )
         metrics = RiskMetrics(
             capex_eur=CAPEX, cycle_life=CYCLES, capacity_mwh=CAPACITY
         )

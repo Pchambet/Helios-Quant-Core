@@ -65,53 +65,77 @@ class BatteryMPC:
         """
         T = len(expected_prices)
 
-        # 1. Armoring: Scale prices to preserve matrix conditioning
+        # 1. Friction parameters (Phase 1 — Brouillard de la Guerre)
+        marginal_cost = self.battery.marginal_cost_eur_per_mwh
+        fee_buy = self.battery.grid_fee_buy_eur_per_mwh
+        fee_sell = self.battery.grid_fee_sell_eur_per_mwh
+        lambda_stress = self.battery.stress_penalty_lambda
+
+        # 2. Armoring: Scale prices to preserve matrix conditioning
         try:
             scaled_prices = self.scaler.transform(expected_prices)
         except ValueError:
             # Auto-fit if uninitialized (should usually be done beforehand on history)
             scaled_prices = self.scaler.fit_transform(expected_prices)
 
-        # 2. Decision Variables
+        scaled_fee_buy = self.scaler.scale_difference(fee_buy)
+        scaled_fee_sell = self.scaler.scale_difference(fee_sell)
+
+        # 3. Decision Variables
         p_ch = cp.Variable(T, nonneg=True)
         p_dis = cp.Variable(T, nonneg=True)
         soc = cp.Variable(T + 1, nonneg=True)
 
-        # 3. Objective: Maximize Profit (Minimize Negative Profit)
-        # Post-Audit V3: Convex LCOS + TURPE grid tariff
+        # 4. Objective: Maximize Profit (DCP-compliant)
+        # Revenue/Cost with asymmetric grid fees
+        sell_prices = scaled_prices - scaled_fee_sell
+        buy_prices = scaled_prices + scaled_fee_buy
+        energy_revenue = p_dis @ sell_prices
+        energy_cost = p_ch @ buy_prices
+
+        # Post-Audit V3: Convex LCOS + TURPE grid tariff (legacy)
         scaled_kappa_0 = self.scaler.scale_difference(self.battery.lcos_kappa_0)
         scaled_kappa_1 = self.scaler.scale_difference(self.battery.lcos_kappa_1)
         scaled_grid_tariff = self.scaler.scale_difference(self.battery.grid_tariff_eur_mwh)
         scaled_alpha = self.scaler.scale_difference(self.alpha_slippage)
 
-        profit = p_dis @ scaled_prices - p_ch @ scaled_prices
-
-        # Convex LCOS: κ₀ * throughput (linear) + κ₁ * Σpower^1.5 (superlinear DoD penalty)
-        # cp.power(x, 1.5) is convex for x >= 0, preserving DCP compliance.
         wear_linear = scaled_kappa_0 * cp.sum(p_ch + p_dis)  # type: ignore
         wear_convex = scaled_kappa_1 * cp.sum(  # type: ignore
             cp.power(p_ch, 1.5) + cp.power(p_dis, 1.5)  # type: ignore
         )
-
-        # TURPE: fixed network access cost per MWh throughput
         grid_cost = scaled_grid_tariff * cp.sum(p_ch + p_dis)  # type: ignore
-
         slippage = scaled_alpha * cp.sum(cp.square(p_ch) + cp.square(p_dis))  # type: ignore
+
+        # Phase 1 frictions: marginal wear + quadratic stress penalty
+        scaled_marginal = self.scaler.scale_difference(marginal_cost)
+        wear_cost = scaled_marginal * cp.sum(p_ch + p_dis)  # type: ignore
+        scaled_lambda = self.scaler.scale_difference(lambda_stress)
+        stress_penalty = scaled_lambda * (
+            cp.sum_squares(p_ch) + cp.sum_squares(p_dis)  # type: ignore[attr-defined]
+        )  # cvxpy.sum_squares exists at runtime, stubs incomplete
 
         # FVA/MVA: Margin funding cost on net position (Audit Faille 3.2)
         scaled_margin_rate = self.scaler.scale_difference(self.margin_funding_rate)
         margin_cost = scaled_margin_rate * cp.sum(cp.abs(p_dis - p_ch))  # type: ignore
 
-        # Salvage Value (valeur de continuation) — corrige l'effet de fin d'horizon MPC
-        # 1 MWh stocké vaut Prix_Moyen × η_dis (il faut décharger pour vendre, donc perte η)
-        salvage_price = float(np.mean(expected_prices))
+        # Salvage Value — compte la fee de vente sur le prix de revente estimé
+        salvage_price = float(np.mean(expected_prices)) - fee_sell
         scaled_salvage = self.scaler.scale_difference(
             salvage_price * self.battery.efficiency_discharge
         )
         salvage_value = soc[T] * scaled_salvage
 
         objective = cp.Maximize(
-            profit - wear_linear - wear_convex - grid_cost - slippage - margin_cost + salvage_value
+            energy_revenue
+            - energy_cost
+            - wear_linear
+            - wear_convex
+            - grid_cost
+            - wear_cost
+            - slippage
+            - stress_penalty
+            - margin_cost
+            + salvage_value
         )
 
         # 4. Physical Constraints (SSOT — Single Source of Truth)
@@ -154,13 +178,22 @@ class BatteryMPC:
         """
         N, T = historical_scenarios.shape
 
-        # 1. Armoring
+        # 1. Friction parameters (Phase 1 — Brouillard de la Guerre)
+        marginal_cost = self.battery.marginal_cost_eur_per_mwh
+        fee_buy = self.battery.grid_fee_buy_eur_per_mwh
+        fee_sell = self.battery.grid_fee_sell_eur_per_mwh
+        lambda_stress = self.battery.stress_penalty_lambda
+
+        scaled_fee_buy = self.scaler.scale_difference(fee_buy)
+        scaled_fee_sell = self.scaler.scale_difference(fee_sell)
+
+        # 2. Armoring
         try:
             scaled_scenarios = self.scaler.transform(historical_scenarios)
         except ValueError:
             scaled_scenarios = self.scaler.fit_transform(historical_scenarios)
 
-        # 2. Base DVs
+        # 3. Base DVs
         p_ch = cp.Variable(T, nonneg=True)
         p_dis = cp.Variable(T, nonneg=True)
         soc = cp.Variable(T + 1, nonneg=True)
@@ -189,6 +222,14 @@ class BatteryMPC:
         scaled_margin_rate = self.scaler.scale_difference(self.margin_funding_rate)
         margin_cost = scaled_margin_rate * cp.sum(cp.abs(p_dis - p_ch))  # type: ignore
 
+        # Phase 1 frictions: marginal wear + quadratic stress penalty (deterministic)
+        scaled_marginal = self.scaler.scale_difference(marginal_cost)
+        wear_cost = scaled_marginal * cp.sum(p_ch + p_dis)  # type: ignore
+        scaled_lambda = self.scaler.scale_difference(lambda_stress)
+        stress_penalty = scaled_lambda * (
+            cp.sum_squares(p_ch) + cp.sum_squares(p_dis)  # type: ignore[attr-defined]
+        )  # cvxpy.sum_squares exists at runtime, stubs incomplete
+
         # We want to maximize worst-case profit.
         # By strong duality, max_{Q} E_Q[Profit] = min_{lam, s} lam*eps + (1/N) sum(s)
         # Therefore, the objective of the overall problem is to Maximize this lower bound.
@@ -204,23 +245,30 @@ class BatteryMPC:
         # from the mean, capturing liquidity co-movement with extreme prices.
         mean_scenario = np.mean(scaled_scenarios, axis=0)
 
-        # Salvage Value (valeur de continuation) — même logique que solve_deterministic
-        salvage_price = float(np.mean(historical_scenarios))
-        scaled_salvage = self.scaler.scale_difference(
-            salvage_price * self.battery.efficiency_discharge
-        )
-        salvage_value = soc[T] * scaled_salvage
-
         for i in range(N):
+            # Per-scenario revenue/cost with asymmetric grid fees
+            sell_prices_i = scaled_scenarios[i] - scaled_fee_sell
+            buy_prices_i = scaled_scenarios[i] + scaled_fee_buy
+            revenue_i = p_dis @ sell_prices_i
+            cost_i = p_ch @ buy_prices_i
+
+            # Per-scenario salvage (mean price of scenario - fee_sell)
+            salvage_price_i = float(np.mean(historical_scenarios[i])) - fee_sell
+            scaled_salvage_i = self.scaler.scale_difference(
+                salvage_price_i * self.battery.efficiency_discharge
+            )
+            salvage_value_i = soc[T] * scaled_salvage_i
+
             # Per-scenario price deviation amplifies the slippage (capped at 2x)
             price_dev = np.sum(np.abs(scaled_scenarios[i] - mean_scenario))
             slippage_amplifier = min(2.0, 1.0 + 0.15 * price_dev)
             scenario_slippage = slippage_amplifier * slippage_base
 
             empirical_loss = (
-                (p_ch @ scaled_scenarios[i] - p_dis @ scaled_scenarios[i])
-                + wear_linear + wear_convex + grid_cost + scenario_slippage + margin_cost
-                - salvage_value
+                (cost_i - revenue_i)
+                + wear_linear + wear_convex + grid_cost + wear_cost + stress_penalty
+                + scenario_slippage + margin_cost
+                - salvage_value_i
             )
             constraints.append(s[i] >= empirical_loss)
 
