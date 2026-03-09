@@ -1,112 +1,159 @@
 # Helios-Quant-Core ⚡
 
-![Tests](https://img.shields.io/badge/audit-passed--28/28-success)
-![Mypy](https://img.shields.io/badge/mypy-strict-blue)
-![API](https://img.shields.io/badge/oracle-ENTSO--E-orange)
-![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+[![CI](https://github.com/Pchambet/Helios-Quant-Core/actions/workflows/ci.yml/badge.svg)](https://github.com/Pchambet/Helios-Quant-Core/actions/workflows/ci.yml)
+[![Mypy](https://img.shields.io/badge/mypy-strict-blue)](/)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](/)
 
-**Trading the physics of the grid, not the noise of the market.**
+**Piloter la physique du réseau, pas le bruit du marché.**
 
-Helios-Quant-Core is an industrial-grade Energy Management System (EMS) designed to operate massive Battery Energy Storage Systems (BESS) on the European power markets.
-
-But it doesn't work like a standard trading bot. Here is the story of why we built it, and how it solves the most critical flaw in modern energy trading.
+Helios-Quant-Core est un EMS (Energy Management System) pour batteries sur les marchés électriques européens. Il combine **MPC** (pilotage par optimisation), **DRO** (optimisation robuste sous incertitude) et **LCOS** (coût de dégradation) pour arbitrer le Day-Ahead (enchères du lendemain) en préservant l’actif physique.
 
 ---
 
-## 📖 The Problem: The Grid is Changing, but Trading Algorithms Aren't
+## En bref : le pourquoi du comment
 
-Historically, electricity prices were predictable. You could train a Machine Learning model on past data, and it would tell you when to buy cheap night power and sell it during the evening peak.
+### Ce qui rend Helios unique
 
-Today, the European grid is flooded with intermittent renewables (wind and solar) and exposed to geopolitical shocks. This creates unprecedented chaos: prices can plummet to -500€/MWh on a sunny Sunday, or skyrocket to +3,000€/MWh when a nuclear plant fails unexpectedly.
+**1. On lit la physique, pas le ticket.** Le prix du MWh n'est qu'un symptôme. Ce qui compte : vent, soleil, nucléaire en ligne, demande. On cherche dans l'historique des journées « jumelles » (même signature physique) pour construire des scénarios crédibles. On ne parie pas sur le marché ; on lit le réseau.
 
-**The standard industry approach is broken:**
-Most energy funds and aggregators still rely on "predictive" AI. They try to guess the exact price of electricity tomorrow.
-1. When the market behaves normally, they make a small profit.
-2. When a crisis hits (a "Black Swan"), their predictive models hallucinate, make the wrong trades, and lose millions.
-3. Even worse, to chase small profits, they constantly cycle the battery, destroying the physical chemistry of a multi-million dollar asset (wear and tear).
+**2. Le PnL est honnête.** Une batterie se dégrade à chaque cycle. Le LCOS (Levelized Cost of Storage = coût de dégradation sur la durée de vie) est intégré dans chaque décision. Si le spread net ne couvre pas ce coût, on ne trade pas. Pas de profit apparent en détruisant l'actif.
 
----
+**3. On se prépare au pire.** La DRO (Distributionally Robust Optimization = optimisation robuste sous incertitude) ne parie pas sur « la moyenne ». Elle se prépare au pire scénario plausible. En régime calme, on arbitre ; en tension, on réduit l'exposition et on attend les vrais pics. Le bouclier s'adapte à la confiance qu'on a dans la prévision (CVE = Coefficient de Variation de l'Erreur, une mesure d'erreur du modèle).
 
-## 💡 The Helios Paradigm: The "Physical Oracle"
+**4. Un seul code, plusieurs échelles.** Une batterie, une pompe à chaleur, un data center IA : ce sont des « buffers » de flux. Même logique physique. La vision va du Micro (une cellule) au Macro (maillage Europe, flux transfrontaliers).
 
-We rebuilt battery trading from the ground up. Instead of playing a guessing game with prices, **Helios-Quant-Core reads the laws of physics.**
+### Pourquoi c'est le bon moment
 
-We shifted from a speculative *Financial algorithm* to a *Thermodynamic controller*.
+- **Juin 2025** : le marché européen passe de 24 à 96 créneaux par jour (granularité 15 min). La plupart des modèles existants ne sont pas prêts. Helios peut capter cette volatilité là où d'autres subiront des erreurs massives.
 
-### 1. The Eyes: Reading the Grid, Not the Ticker
-Instead of looking at past price noise, Helios connects directly to the European transmission system (ENTSO-E). Every morning, it looks at the physical reality of the continent:
-- *How much wind is blowing?*
-- *How much sun is shining?*
-- *How many nuclear reactors are online?*
-- *What is the total human power demand?*
+- **Le FCR (régulation de fréquence)** s'effondre : trop de batteries sur ce segment, les prix chutent. La valeur se déplace vers l'arbitrage et la gestion d'actif — le terrain d'Helios.
 
-By finding past days that share the **exact same physical signature**, Helios creates a realistic set of scenarios for tomorrow.
+- **Données et outils sont mûrs** : ENTSO-E (plateforme européenne des données du réseau électrique), Open-Meteo (météo gratuite), Copernicus (imagerie continentale). Les briques existent ; il faut les assembler.
 
-### 2. The Brain: Paranoia as a Superpower (Distributionally Robust Optimization)
-Once Helios knows the physical state of the grid, it doesn't just calculate the "average" expected price. It uses advanced Operations Research mathematics (Distributionally Robust Optimization) to prepare for the **worst-case scenario**.
-- If the grid is stable (lots of wind, nuclear is running), Helios lowers its shield and trades aggressively, capturing normal margins.
-- If the grid is scarce (nuclear outages, gas crisis), Helios expands its mathematical shield. It stops chasing pennies, refuses to wear out the battery, and waits like a sniper to capture massive crisis price spikes.
-
-### 3. The Body: Protecting the Battery
-Helios incorporates a "Digital Twin" of the battery. It mathematically knows that cycling a battery degrades its lifespan (Levelized Cost of Storage - LCOS). It also pays the real-world grid fees (TURPE) in its simulation. It will never make a trade if the financial profit is lower than the chemical damage inflicted on the battery.
+- **Fenêtre courte** : les acteurs établis (Tesla, agrégateurs) ont le capital mais pas toujours la finesse physique. Un outil SaaS pour ceux qui *ont* l'actif peut se glisser avant que le marché ne se verrouille.
 
 ---
 
-## 🚀 The Results: Peacetime vs. Wartime
+## Le récit en 5 minutes
 
-We backtested Helios-Quant-Core against the two extremes of the European market.
+*Comme si je te racontais le projet face à face.*
 
-**1. Normal Conditions (May 2023)**
-*The grid is calm. Prices peak at 160 €.*
-- Standard AI Models: ~6,800 €
-- Helios-Quant-Core: **7,488 €**
-*(Helios makes the exact same money as highly aggressive algorithms, but with fewer cycles, saving the battery's lifespan.)*
+**Ce que je ne suis pas.** Je ne fais pas du trading. Je ne veux pas être trader. Et je sais que je serais perdant : premièrement, je n'ai pas accès au marché moi-même — ni l'argent ni les connexions pour entrer sur ce marché. Donc le trading, je m'en fous, c'est hors sujet. Deuxièmement, les traders déjà installés prédisent le prix du MWh infiniment mieux que moi. Ce n'est pas la bataille que je vise.
 
-**2. The Ultimate Crisis (August 2022)**
-*The Russian gas crisis and French nuclear outages. Extreme volatility.*
-- "Blind" Mathematical Models: ~6,500 € (They get terrified by volatility and freeze).
-- Helios-Quant-Core: **17,381 €** (A **2.6x increase** in profit).
-*(Because Helios read the ENTSO-E physical data, it understood the nuclear scarcity. It lowered its standard trading, armed its robust shield, and perfectly captured the 1000€/MWh price dislocations).*
+**Ce que j'apporte.** La différence, c'est l'Oracle Physique. Pas « deviner le prix demain » — mais lire la *physique* du réseau : vent, soleil, nucléaire, demande. Ensuite, une batterie n'est pas un ticker. Elle se dégrade. Les traders optimisent le PnL brut ; moi j'intègre le LCOS. Chaque cycle a un coût chimique. Si le spread net est sous ce coût, je ne trade pas. L'outil que je construis s'adresse à ceux qui *ont* l'actif : propriétaires de batterie, agrégateurs, TSO (gestionnaires de réseau). Eux ont besoin d'un cerveau qui lit la physique et qui préserve l'actif — pas d'un spéculateur de plus.
 
----
+**Le problème.** Les algos existants prédisent le prix avec du ML. Ils marchent bien… jusqu'au jour où le marché part en vrille. Août 2022 : gaz russe, nucléaire au tapis, prix à 1000 €/MWh. Ces modèles se plantent. Et pour gratter quelques euros, ils font tourner la batterie en roue libre. Chaque cycle use la chimie. Tu détruis un actif de plusieurs millions pour des marges de centimes.
 
-## 🛡️ Built for Institutional Trust
+**L'intuition.** Le prix n'est pas le signal. Le prix est le *symptôme*. Ce qui compte, c'est la réalité physique. Si tu lis ça, tu peux trouver dans l'historique des journées « jumelles » — même signature physique — et en déduire des scénarios crédibles. Tu lis le réseau.
 
-For an energy aggregator or an infrastructure fund, an algorithm must be auditable. You cannot put a €20M battery in the hands of a "black-box" AI.
+**Les maths.** Je fais de la DRO : Distributionally Robust Optimization. Je me prépare au *pire cas* dans un ensemble de distributions plausibles. En régime calme, le bouclier se baisse. En tension, il se lève. Et j'intègre le LCOS à chaque décision. Le PnL est honnête.
 
-Helios-Quant-Core is entirely transparent and mathematically provable.
-- **No Free Lunches:** We ran extensive "Poison Tests". If we give Helios fake physical data, it loses money. It genuinely relies on physical intelligence, not data leakage or cheats.
-- **Strictly Safe:** It solves an exact mathematical optimization problem (Linear Programming). It will never output an action that violates physical laws.
+**L'exécution.** J'ai construit ça couche par couche. D'abord le Micro : une batterie, un point, MPC (pilotage par optimisation) + LCOS + paper trading live. LightGBM (modèle de prévision) pour la prévision, ENTSO-E (données réseau européen) et Open-Meteo (météo) pour les données. Ça tourne. Le tear sheet (rapport de performance) valide le CVE (erreur du modèle), le Hit Ratio (bonnes décisions vs opportunités manquées). Ensuite viendra le Méso : les analogues KNN (situations historiques similaires), l'explicabilité (« je décharge parce que ça ressemble au 12 janvier 2024 »). Puis le Macro : maillage Europe, flux transfrontaliers.
 
 ---
 
-## 🚦 Quick Start for Engineers
+## Le paradigme : l'« Oracle Physique »
 
-For the technical implementation, mathematical proofs ($L_1$ Wasserstein Duality), and reproducibility setup:
+Au lieu de prédire le prix exact, Helios s’appuie sur la **réalité physique du réseau** :
 
-### Setup & Play
+1. **Les yeux** — Données ENTSO-E (charge, vent, soleil, nucléaire) + météo (Open-Meteo). Analogues historiques pour construire des scénarios crédibles.
+
+2. **Le cerveau** — DRO (optimisation robuste) avec bouclier adaptatif. En régime calme : arbitrage agressif. En tension : repli, attente des pics.
+
+3. **Le corps** — LCOS (coût de dégradation) intégré. Aucun cycle si le profit net est inférieur au coût de dégradation.
+
+---
+
+## État actuel : Micro validé
+
+| Niveau | Statut | Contenu |
+|--------|--------|---------|
+| **Micro** | ✅ | MPC + LCOS + Paper Trading live (LightGBM, Double Bouclier = bouclier adaptatif) |
+| **Méso** | 🔜 | Analogues KNN (situations historiques similaires), explicabilité |
+| **Macro** | 📋 | Maillage Europe, flux transfrontaliers |
+
+Le paper trading tourne en continu via **GitHub Actions** (orchestrateur 10h30 Paris, réconciliateur 14h Paris).
+
+---
+
+## Quick Start
+
 ```bash
 git clone https://github.com/Pchambet/Helios-Quant-Core
 cd Helios-Quant-Core
 
-# Setup environment
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e "."
+# Installation (uv recommandé)
+uv sync
 
-# Run the peacetime benchmark
-python run_normal_benchmark.py
-# ou: python run_benchmark.py --mode normal
-
-# Benchmark crise août 2022 (défaut)
-python run_benchmark.py
-# Dates custom
-python run_benchmark.py --mode custom --start 2023-01-01 --end 2023-01-31
+# Clé API ENTSO-E (requise pour le live)
+# Copier .env.example → .env et remplir ENTSOE_API_KEY
 ```
 
-### Deep Dives
-- [Mathematical Whitepaper (THEORY.md)](THEORY.md)
-- [Industrial Audit Trail (walkthrough.md)](brain/walkthrough.md)
+### Backtest
+
+```bash
+uv run python run_benchmark.py                    # Crise août 2022 (défaut)
+uv run python run_normal_benchmark.py           # Mai 2023 (peacetime)
+uv run python run_benchmark.py --mode custom --start 2023-01-01 --end 2023-01-31
+```
+
+### Paper Trading
+
+```bash
+uv run python run_paper_trader.py                # Génère ordre J+1
+uv run python run_reconciler.py                 # Calcule PnL réel
+uv run python run_paper_health_check.py         # Santé du pipeline
+uv run python run_paper_tear_sheet.py            # Rapport post-mortem (CVE, Hit Ratio)
+```
+
+### Sensibilité & Audit
+
+```bash
+uv run python run_gamma_sensitivity.py           # Impact du CVE sur ε DRO
+uv run python run_audit_meteo.py                # Audit météo
+```
 
 ---
-*Helios-Quant-Core v1.0.0-PRODUCTION. Uniting the laws of thermodynamics with quantitative finance.*
+
+## Structure
+
+```
+Helios-Quant-Core/
+├── src/helios_core/
+│   ├── assets/           # Modèle batterie (LCOS, contraintes)
+│   ├── optimization/     # MPC / DRO (CVXPY)
+│   ├── stochastic/       # Forecaster LightGBM, ScenarioGenerator, Risk Manager
+│   ├── paper_trading/    # Orchestrateur, Réconciliateur, Live Data
+│   ├── simulate/         # Backtester, métriques
+│   └── data/             # Loaders ENTSO-E, météo
+├── data/paper/           # trades_log.csv, paper_pnl_log.csv
+├── docs/                 # Architecture, audits, vision
+└── .github/workflows/    # CI, Paper Orchestrator, Paper Reconciler
+```
+
+---
+
+## Documentation
+
+| Document | Contenu |
+|----------|---------|
+| [THEORY.md](THEORY.md) | Fondements mathématiques (DRO, Wasserstein, dualité) |
+| [docs/ARCHITECTURE_PAPER_TRADING.md](docs/ARCHITECTURE_PAPER_TRADING.md) | Pipeline paper trading, cron, GitHub Actions |
+| [docs/TEAR_SHEET_INTERPRETATION.md](docs/TEAR_SHEET_INTERPRETATION.md) | Lecture CVE, Hit Ratio, télémétrie |
+| [docs/vision/STRATEGIC_ORCHESTRATION_MANIFESTO.md](docs/vision/STRATEGIC_ORCHESTRATION_MANIFESTO.md) | Vision Micro → Méso → Macro |
+| [docs/AUDIT_HELIOS_QUANT_CORE.md](docs/AUDIT_HELIOS_QUANT_CORE.md) | Audit technique complet |
+
+---
+
+## Résultats backtest
+
+| Régime | Contexte | Helios vs baselines |
+|--------|----------|---------------------|
+| **Peacetime** | Mai 2023, prix < 160 € | +10 % vs MPC naïf, moins de cycles |
+| **Crisis** | Août 2022, gaz russe, nucléaire FR | **×2,6** vs modèles « aveugles » |
+
+---
+
+## Licence
+
+GPL-3.0. Voir [LICENSE](LICENSE).
