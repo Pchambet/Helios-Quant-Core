@@ -147,10 +147,32 @@ Helios-Quant-Core/
 
 ## Résultats backtest
 
-| Régime | Contexte | Helios vs baselines |
-|--------|----------|---------------------|
-| **Peacetime** | Mai 2023, prix < 160 € | +10 % vs MPC naïf, moins de cycles |
-| **Crisis** | Août 2022, gaz russe, nucléaire FR | **×2,6** vs modèles « aveugles » |
+*PnL net (LCOS inclus) — runs actuels, batterie 1 MWh, config par défaut. Walk-forward 24h, pas de look-ahead bias.*
+
+| Régime | Contexte | Naive | MPC | DRO (robuste) |
+|--------|----------|-------|-----|---------------|
+| **Crise** | Août 2022, gaz russe, nucléaire FR | 19 495 € | **33 314 €** | 16 582 € |
+| **Peacetime** | Mai 2023, prix < 160 € | 5 405 € | **6 538 €** | 4 822 € |
+
+### Constat
+
+MPC performe le mieux sur ces périodes. Le DRO, orienté robustesse (préparation au pire cas), est plus conservateur et sous-performe en PnL — il réduit l'exposition en période incertaine, au prix d'opportunités manquées.
+
+### Explications
+
+- **MPC déterministe** : fait confiance à la prévision (LightGBM ou heuristique). Quand la prévision est raisonnablement bonne, il exploite chaque opportunité. Dans un backtest, les prix sont connus ex-post — on mesure la capacité à « bien jouer » la courbe prévue.
+
+- **DRO Wasserstein** : minimise la perte dans le *pire cas* sur une boule de distributions (rayon ε). Il hedge contre un déplacement adverse de la distribution. En replay historique, ce pire cas ne se réalise pas ; l’hedge coûte donc des opportunités sans compensation observable en PnL. La valeur du DRO est théoriquement **hors échantillon** (distribution shift, crise non vue) et sur des métriques de risque (drawdown, RoDC, worst-case), pas sur le PnL moyen.
+
+- **ε dynamique** : le `DynamicEpsilonManager` recalcule ε à chaque pas : ε_base ∝ 1/√N (scénarios), × (1 + β×entropie régime) × (1 + γ×CVE). Si CVE ou l’entropie régime sont élevés, ε monte → DRO devient plus conservateur. Les bornes actuelles (eps_min=0.02, eps_max=0.30) peuvent être sous/sur-calibrées selon le régime.
+
+### Pistes d’investigation
+
+1. **Métriques complémentaires** : RoDC (rendement par cycle), EFC (équivalent cycles complets), drawdown max, CVaR. Un DRO « perdant » en PnL peut être gagnant en RoDC ou en protection du downside.
+2. **Tuning ε** : grid search ε fixe vs ε dynamique ; comparer avec `run_gamma_sensitivity.py` (impact du CVE sur ε). Un ancien calibrage (voir `docs/strategy/03_investment_memorandum.md`) suggérait ε≈0.5 optimal sur une config différente — à réévaluer.
+3. **Régimes cibles** : tester des phases de transition (sortie de crise, entrée en tension) où la prévision se dégrade. C’est là que le hedge DRO devrait théoriquement briller.
+4. **Scénarios** : le `ScenarioGenerator` (KNN + régime) alimente le DRO. Si les scénarios sont trop étroits ou trop bruités, ε ne compense pas — enrichir ou filtrer les analogues pourrait changer la donne.
+5. **Comparaison ε=0** : forcer ε=0 dans le DRO pour vérifier qu’on retrouve un comportement proche du MPC (sanity check du pipeline).
 
 ---
 
