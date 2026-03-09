@@ -73,7 +73,7 @@ class WalkForwardBacktester:
                 start=self.data.index[t], periods=horizon, freq="h"
             )
 
-        return causal_forecast
+        return causal_forecast  # type: ignore[no-any-return]
 
     def run(self) -> dict[str, float]:
         prices = self.data['Price_EUR_MWh'].to_numpy(dtype=float)

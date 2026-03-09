@@ -84,7 +84,8 @@ class HistoricalCrisisLoader:
         """
         try:
             if mock:
-                df_meteo = self._generate_synthetic_meteo(df.index)
+                idx = pd.DatetimeIndex(pd.to_datetime(df.index, utc=True))
+                df_meteo = self._generate_synthetic_meteo(idx)
             else:
                 ensure_data_dir()
                 date_str = self.start_date.strftime("%Y_%m")

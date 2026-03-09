@@ -32,5 +32,9 @@ Thumbs.db
 .envrc
 
 # Data & Reports
-/data/
+/data/*
+!/data/paper/
+!/data/paper/trades_log.csv
+!/data/paper/paper_pnl_log.csv
+data/paper/*.parquet
 /reports/

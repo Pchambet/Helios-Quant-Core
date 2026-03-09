@@ -256,7 +256,7 @@ class LiveDataFetcher:
             df = pd.concat([df, df_future]).sort_index()
 
         df = df.ffill().bfill()
-        return df
+        return df  # type: ignore[no-any-return]
 
     def _require_entsoe_key(self) -> None:
         if not self.api_key:

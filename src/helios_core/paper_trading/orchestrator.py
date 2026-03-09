@@ -69,7 +69,7 @@ def _build_mock_dataset(target_date: date, lookback_days: int) -> pd.DataFrame:
         },
         index=idx,
     )
-    return df.ffill().bfill()
+    return df.ffill().bfill()  # type: ignore[no-any-return]
 
 
 def _compute_soc_trajectory(

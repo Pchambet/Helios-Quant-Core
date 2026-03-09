@@ -1,0 +1,49 @@
+# Réconciliateur Paper Trading — 14h00 Paris (13:00 UTC)
+# Calcule le PnL réel (ordres × prix EPEX) après publication day-ahead.
+# Nécessite: ENTSOE_API_KEY dans Settings → Secrets and variables → Actions
+
+name: Paper Reconciler
+
+permissions:
+  contents: write
+
+on:
+  schedule:
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+
+jobs:
+  reconciler:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Paris
+      ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "v0.5.11"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run Réconciliateur
+        run: uv run python run_reconciler.py
+
+      - name: Commit paper_pnl_log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/paper/paper_pnl_log.csv
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "paper: reconciler $(date -u +%Y-%m-%d)"
+            git push
+          fi

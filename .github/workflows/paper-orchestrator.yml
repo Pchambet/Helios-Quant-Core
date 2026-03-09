@@ -1,0 +1,49 @@
+# Orchestrateur Paper Trading — 10h30 Paris (09:30 UTC)
+# Génère l'ordre J+1 avant Gate Closure 12h00 CET.
+# Nécessite: ENTSOE_API_KEY dans Settings → Secrets and variables → Actions
+
+name: Paper Orchestrator
+
+permissions:
+  contents: write
+
+on:
+  schedule:
+    - cron: "30 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  orchestrator:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Paris
+      ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "v0.5.11"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run Orchestrateur
+        run: uv run python run_paper_trader.py
+
+      - name: Commit trades_log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/paper/trades_log.csv
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "paper: orchestrator $(date -u +%Y-%m-%d)"
+            git push
+          fi

@@ -191,6 +191,20 @@ PROJECT_ROOT=/chemin/vers/Helios-Quant-Core
 
 **Note :** Avec TZ=Europe/Paris, 10h30 et 14h00 restent corrects toute l'année (CET/CEST géré automatiquement).
 
+### GitHub Actions (alternative au cron local)
+
+Les workflows `.github/workflows/paper-orchestrator.yml` et `paper-reconciler.yml` exécutent le pipeline sans machine locale allumée.
+
+1. **Secrets** : `Settings → Secrets and variables → Actions → New repository secret`
+   - Nom : `ENTSOE_API_KEY`
+   - Valeur : ta clé API ENTSO-E Transparency
+
+2. **Heures** : 09:30 UTC (10h30 Paris hiver) et 13:00 UTC (14h Paris hiver). En été (CEST) décalage de ~1h.
+
+3. **Persistance** : Les fichiers `data/paper/trades_log.csv` et `paper_pnl_log.csv` sont committés après chaque run.
+
+4. **Premier run** : S'assurer que `data/paper/` existe et contient les CSV (ou les créer via un run local). Le `.gitignore` exclut `/data/` sauf ces deux fichiers.
+
 ---
 
 ## 7. Gestion des erreurs

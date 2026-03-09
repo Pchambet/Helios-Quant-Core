@@ -145,7 +145,7 @@ class PaperTraderReconciler:
         if len(matches) == 0:
             return None
 
-        return matches.iloc[-1]  # Dernier ordre si doublons
+        return matches.iloc[-1]  # type: ignore[no-any-return]  # Dernier ordre si doublons
 
     def _align_prices_to_hours(
         self, df_prices: pd.DataFrame, target_date: date
