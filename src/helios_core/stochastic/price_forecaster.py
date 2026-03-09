@@ -19,7 +19,7 @@ PHYSICAL_COLS = ["Load_Forecast", "Wind_Forecast", "Solar_Forecast", "Nuclear_Ge
 
 def _build_train_features(df: pd.DataFrame, idx: int) -> dict[str, float]:
     """Features causales pour entraînement (idx dans df)."""
-    prices = df["Price_EUR_MWh"].values
+    prices = np.asarray(df["Price_EUR_MWh"], dtype=np.float64)
     ts = df.index[idx]
     feat = {
         "hour_sin": np.sin(2 * np.pi * ts.hour / 24),
@@ -181,9 +181,9 @@ class LightGBMPriceForecaster:
 
     def _fallback_persistence(self, past_data: pd.DataFrame, horizon: int) -> tuple[np.ndarray, float]:
         """Répète les dernières 24h. CVE=0 (pas de métrique instrumentale)."""
-        prices = past_data["Price_EUR_MWh"].values
+        prices = np.asarray(past_data["Price_EUR_MWh"], dtype=np.float64)
         if len(prices) >= 24:
-            last = prices[-24:]
+            last = np.asarray(prices[-24:], dtype=np.float64)
         else:
             arr_prices = np.asarray(prices, dtype=np.float64)
             last = np.full(24, float(np.mean(arr_prices)) if len(arr_prices) > 0 else 50.0)

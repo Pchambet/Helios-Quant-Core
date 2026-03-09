@@ -199,6 +199,6 @@ class ScenarioGenerator:
             scenarios += shock
 
         # Bornes physiques EPEX SPOT Day-Ahead
-        scenarios = np.clip(scenarios, self.EPEX_MIN, self.EPEX_MAX)
+        scenarios = np.clip(scenarios, self.EPEX_MIN, self.EPEX_MAX)  # type: ignore[assignment]
 
         return scenarios
