@@ -3,8 +3,10 @@
 #
 # Installation : crontab -e puis copier les lignes ci-dessous.
 # Adapter PROJECT_ROOT au chemin de ton dépôt.
+# Cron n'a pas ton PATH interactif : inclure le répertoire de uv (which uv).
 
 PROJECT_ROOT=/Users/pierre/Desktop/GitHub/Helios-Quant-Core
+PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin
 
 # Orchestrateur — 10h30 Paris (ordres J+1, avant Gate Closure 12h00)
 30 10 * * * cd $PROJECT_ROOT && TZ=Europe/Paris uv run python run_paper_trader.py

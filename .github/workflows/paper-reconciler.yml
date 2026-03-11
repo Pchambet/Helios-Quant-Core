@@ -33,6 +33,14 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Validate ENTSOE_API_KEY
+        run: |
+          if [ -z "$ENTSOE_API_KEY" ]; then
+            echo "::error::ENTSOE_API_KEY not set. Add it in Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          echo "ENTSOE_API_KEY is configured"
+
       - name: Run Réconciliateur
         run: uv run python run_reconciler.py
 
