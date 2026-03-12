@@ -1,5 +1,6 @@
-# Orchestrateur Paper Trading — 10h30 Paris (09:30 UTC)
-# Génère l'ordre J+1 avant Gate Closure 12h00 CET.
+# Orchestrateur Paper Trading — 10h30 Paris
+# Cron UTC: 08:30 en été (CEST) = 10:30 Paris | 09:30 en hiver (CET) = 09:30 Paris
+# Génère l'ordre J+1 avant Gate Closure 12h00.
 # Nécessite: ENTSOE_API_KEY dans Settings → Secrets and variables → Actions
 
 name: Paper Orchestrator
@@ -9,7 +10,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "30 9 * * *"
+    - cron: "30 8 * * *"
   workflow_dispatch:
 
 jobs:

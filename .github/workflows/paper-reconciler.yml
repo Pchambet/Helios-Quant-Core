@@ -1,4 +1,5 @@
-# Réconciliateur Paper Trading — 14h00 Paris (13:00 UTC)
+# Réconciliateur Paper Trading — 14h00 Paris
+# Cron UTC: 12:00 en été (CEST) = 14:00 Paris | 13:00 en hiver (CET) = 13:00 Paris (prix DA ~12h30)
 # Calcule le PnL réel (ordres × prix EPEX) après publication day-ahead.
 # Nécessite: ENTSOE_API_KEY dans Settings → Secrets and variables → Actions
 
@@ -9,7 +10,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "0 13 * * *"
+    - cron: "0 12 * * *"
   workflow_dispatch:
 
 jobs:
